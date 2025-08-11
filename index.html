@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WaniKani Review PWA</title>
+    <meta name="description" content="WaniKani review app with exclusion support">
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/png" href="icons/icon-192x192.png">
+    <meta name="theme-color" content="#4A90E2">
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="login-screen" class="screen active">
+            <div class="container">
+                <h1>WaniKani Review</h1>
+                <p>Enter your WaniKani API token to start reviewing</p>
+                <div class="form-group">
+                    <input type="password" id="api-token" placeholder="API Token" />
+                    <button id="login-btn" onclick="login()">Start Reviewing</button>
+                </div>
+                <div class="help-text">
+                    <p>Get your API token from <a href="https://www.wanikani.com/settings/personal_access_tokens" target="_blank">WaniKani Settings</a></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Screen -->
+        <div id="loading-screen" class="screen">
+            <div class="container">
+                <div class="spinner"></div>
+                <p id="loading-text">Loading your reviews...</p>
+            </div>
+        </div>
+
+        <!-- Review Screen -->
+        <div id="review-screen" class="screen">
+            <div class="header">
+                <div class="stats">
+                    <span id="progress">0/0</span>
+                    <span id="accuracy">100%</span>
+                </div>
+                <button id="menu-btn" onclick="toggleMenu()">☰</button>
+            </div>
+
+            <div class="review-container">
+                <div id="question-card" class="card">
+                    <div id="subject-type" class="subject-type"></div>
+                    <div id="question-text" class="question-text"></div>
+                    <div id="question-hint" class="question-hint"></div>
+                </div>
+
+                <div class="answer-section">
+                    <input type="text" id="answer-input" placeholder="Type your answer..." />
+                    <button id="submit-btn" onclick="submitAnswer()">Submit</button>
+                </div>
+
+                <div id="result-card" class="card hidden">
+                    <div id="result-text" class="result-text"></div>
+                    <div id="correct-answer" class="correct-answer"></div>
+                    <div class="button-group">
+                        <button id="correct-btn" onclick="markCorrect()">Correct</button>
+                        <button id="incorrect-btn" onclick="markIncorrect()">Incorrect</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="menu" class="menu hidden">
+                <div class="menu-item" onclick="showStats()">Statistics</div>
+                <div class="menu-item" onclick="showExcluded()">Excluded Items</div>
+                <div class="menu-item" onclick="logout()">Logout</div>
+            </div>
+        </div>
+
+        <!-- Stats Screen -->
+        <div id="stats-screen" class="screen">
+            <div class="container">
+                <h2>Review Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-reviews">0</div>
+                        <div class="stat-label">Total Reviews</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="correct-answers">0</div>
+                        <div class="stat-label">Correct</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="accuracy-rate">100%</div>
+                        <div class="stat-label">Accuracy</div>
+                    </div>
+                </div>
+                <button onclick="backToReview()">Back to Review</button>
+            </div>
+        </div>
+
+        <!-- Excluded Items Screen -->
+        <div id="excluded-screen" class="screen">
+            <div class="container">
+                <h2>Excluded Items</h2>
+                <div id="excluded-list" class="excluded-list">
+                    <!-- Excluded items will be populated here -->
+                </div>
+                <button onclick="backToReview()">Back to Review</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script src="sw.js"></script>
+</body>
+</html>

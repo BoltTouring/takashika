@@ -1,0 +1,12 @@
+This directory should contain PWA icons in the following sizes:
+- 72x72.png
+- 96x96.png
+- 128x128.png
+- 144x144.png
+- 152x152.png
+- 192x192.png
+- 384x384.png
+- 512x512.png
+
+You can create these using any image editor or online PWA icon generator.
+For now, you can use a simple colored square or the WaniKani logo.
