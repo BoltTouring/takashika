@@ -199,22 +199,27 @@ class WaniKaniReviewer {
         const subjectTypeEl = document.getElementById('subject-type');
         const questionTextEl = document.getElementById('question-text');
         const questionHintEl = document.getElementById('question-hint');
+        const answerInput = document.getElementById('answer-input');
         
         subjectTypeEl.textContent = subject.object.toUpperCase();
         questionTextEl.textContent = subject.data.characters || subject.data.slug;
         
         if (this.currentTaskType === 'meaning') {
             questionHintEl.textContent = 'Enter the meaning';
+            answerInput.classList.remove('japanese-input');
+            answerInput.setAttribute('lang', 'en');
         } else {
             questionHintEl.textContent = 'Enter the reading';
+            answerInput.classList.add('japanese-input');
+            answerInput.setAttribute('lang', 'ja');
         }
         
         // Clear previous answer
-        document.getElementById('answer-input').value = '';
+        answerInput.value = '';
         document.getElementById('result-card').classList.add('hidden');
         
         // Focus on input
-        document.getElementById('answer-input').focus();
+        answerInput.focus();
     }
 
     async submitAnswer() {
@@ -260,13 +265,16 @@ class WaniKaniReviewer {
         const correctAnswer = document.getElementById('correct-answer');
         
         resultCard.classList.remove('hidden', 'correct', 'incorrect');
+        resultText.classList.remove('correct', 'incorrect');
         
         if (isCorrect) {
             resultCard.classList.add('correct');
+            resultText.classList.add('correct');
             resultText.textContent = 'Correct!';
             correctAnswer.textContent = '';
         } else {
             resultCard.classList.add('incorrect');
+            resultText.classList.add('incorrect');
             resultText.textContent = 'Incorrect';
             
             // Show correct answer
@@ -360,7 +368,23 @@ class WaniKaniReviewer {
 
     toggleMenu() {
         const menu = document.getElementById('menu');
-        menu.classList.toggle('hidden');
+        menu.classList.toggle('show');
+        
+        // Close menu when clicking outside
+        if (menu.classList.contains('show')) {
+            setTimeout(() => {
+                document.addEventListener('click', this.closeMenuOnOutsideClick.bind(this), { once: true });
+            }, 0);
+        }
+    }
+
+    closeMenuOnOutsideClick(event) {
+        const menu = document.getElementById('menu');
+        const menuBtn = document.getElementById('menu-btn');
+        
+        if (!menu.contains(event.target) && !menuBtn.contains(event.target)) {
+            menu.classList.remove('show');
+        }
     }
 
     showStats() {
@@ -373,7 +397,7 @@ class WaniKaniReviewer {
         document.getElementById('accuracy-rate').textContent = `${accuracy}%`;
         
         this.showScreen('stats');
-        document.getElementById('menu').classList.add('hidden');
+        document.getElementById('menu').classList.remove('show');
     }
 
     showExcluded() {
@@ -399,7 +423,7 @@ class WaniKaniReviewer {
         });
         
         this.showScreen('excluded');
-        document.getElementById('menu').classList.add('hidden');
+        document.getElementById('menu').classList.remove('show');
     }
 
     backToReview() {
@@ -411,7 +435,7 @@ class WaniKaniReviewer {
         this.apiToken = null;
         this.showScreen('login');
         document.getElementById('api-token').value = '';
-        document.getElementById('menu').classList.add('hidden');
+        document.getElementById('menu').classList.remove('show');
     }
 
     shuffleArray(array) {
@@ -469,6 +493,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('answer-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
             submitAnswer();
+        }
+    });
+    
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+        const menu = document.getElementById('menu');
+        const menuBtn = document.getElementById('menu-btn');
+        
+        if (menu.classList.contains('show') && 
+            !menu.contains(e.target) && 
+            !menuBtn.contains(e.target)) {
+            menu.classList.remove('show');
         }
     });
 });
