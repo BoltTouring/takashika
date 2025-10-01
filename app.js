@@ -17,11 +17,20 @@ class WaniKaniReviewer {
         };
         this.currentTaskType = null; // 'meaning' or 'reading'
         this.isComposing = false; // IME composition guard
+        this.menuTopPx = 80; // default fallback
         
         this.init();
     }
 
     async init() {
+        // Compute menu top based on header height when available
+        const header = document.querySelector('.header');
+        if (header) {
+            this.menuTopPx = header.offsetHeight + 8;
+            const menu = document.getElementById('menu');
+            if (menu) menu.style.top = `${this.menuTopPx}px`;
+        }
+
         // Bind input handlers for kana conversion
         const answerInput = document.getElementById('answer-input');
         if (answerInput) {
@@ -43,6 +52,16 @@ class WaniKaniReviewer {
                         try { answerInput.setSelectionRange(after.length, after.length); } catch (_) {}
                     }
                 }
+            });
+        }
+
+        // Attach explicit menu button handler to avoid inline issues
+        const menuBtn = document.getElementById('menu-btn');
+        if (menuBtn) {
+            menuBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggleMenu();
             });
         }
 
@@ -380,6 +399,15 @@ class WaniKaniReviewer {
 
     toggleMenu() {
         const menu = document.getElementById('menu');
+        if (!menu) return;
+        // Ensure correct position in case header size changed
+        const header = document.querySelector('.header');
+        if (header) {
+            const top = header.offsetHeight + 8;
+            menu.style.top = `${top}px`;
+        } else {
+            menu.style.top = `${this.menuTopPx}px`;
+        }
         menu.classList.toggle('show');
         if (menu.classList.contains('show')) {
             setTimeout(() => {
@@ -391,7 +419,8 @@ class WaniKaniReviewer {
     closeMenuOnOutsideClick(event) {
         const menu = document.getElementById('menu');
         const menuBtn = document.getElementById('menu-btn');
-        if (!menu.contains(event.target) && !menuBtn.contains(event.target)) {
+        if (!menu) return;
+        if (!menu.contains(event.target) && (!menuBtn || !menuBtn.contains(event.target))) {
             menu.classList.remove('show');
         }
     }
