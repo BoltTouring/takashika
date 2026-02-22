@@ -338,6 +338,14 @@ button:active {
     background: #c82333;
 }
 
+#known-btn {
+    background: #6c757d;
+}
+
+#known-btn:hover {
+    background: #5a6268;
+}
+
 /* Menu - Fixed positioning */
 .menu {
     position: fixed;

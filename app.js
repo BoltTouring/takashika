@@ -8,6 +8,8 @@ class WaniKaniReviewer {
         this.subjectById = new Map();
         this.studyMaterials = [];
         this.excludedSubjectIds = new Set();
+        this.pendingReviews = new Map();
+        this.taskCounts = new Map();
         this.currentReview = null; // { assignment, type: 'meaning'|'reading' }
         this.reviewQueue = [];
         this.sessionStats = { total: 0, correct: 0, incorrect: 0 };
@@ -62,7 +64,7 @@ class WaniKaniReviewer {
         }
 
         if ('serviceWorker' in navigator) {
-            try { await navigator.serviceWorker.register('sw.js'); } catch (_) {}
+            try { await navigator.serviceWorker.register('./sw.js', { scope: './' }); } catch (_) {}
         }
     }
 
@@ -137,6 +139,21 @@ class WaniKaniReviewer {
         if (!resp.ok) throw new Error(`API request failed: ${resp.status}`);
         return await resp.json();
     }
+    async apiPost(endpoint, body) { return this.apiSend(`https://api.wanikani.com/v2${endpoint}`, 'POST', body); }
+    async apiPut(endpoint, body) { return this.apiSend(`https://api.wanikani.com/v2${endpoint}`, 'PUT', body); }
+    async apiSend(url, method, body) {
+        const resp = await fetch(url, {
+            method,
+            headers: {
+                'Authorization': `Token token=${this.apiToken}`,
+                'Content-Type': 'application/json',
+                'Wanikani-Revision': '20170710'
+            },
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) throw new Error(`API request failed: ${resp.status}`);
+        return await resp.json();
+    }
 
     processExcludedItems() {
         this.excludedSubjectIds.clear();
@@ -150,6 +167,7 @@ class WaniKaniReviewer {
     buildReviewQueue() {
         const now = new Date();
         this.reviewQueue = [];
+        this.taskCounts.clear();
         for (const assignment of this.assignments) {
             const sid = assignment.data.subject_id;
             if (this.excludedSubjectIds.has(sid)) continue;
@@ -161,14 +179,26 @@ class WaniKaniReviewer {
             if (!subject) continue;
             const hasReadings = subject.data.readings && subject.data.readings.length > 0;
             const hasMeanings = subject.data.meanings && subject.data.meanings.length > 0;
+            let taskCount = 0;
             // Radicals: meaning only
             if (subject.object === 'radical') {
-                if (hasMeanings) this.reviewQueue.push({ assignment, type: 'meaning' });
+                if (hasMeanings) {
+                    this.reviewQueue.push({ assignment, type: 'meaning' });
+                    taskCount = 1;
+                }
+                if (taskCount > 0) this.taskCounts.set(sid, taskCount);
                 continue;
             }
             // Kanji/Vocab: enqueue both reading and meaning tasks
-            if (hasReadings) this.reviewQueue.push({ assignment, type: 'reading' });
-            if (hasMeanings) this.reviewQueue.push({ assignment, type: 'meaning' });
+            if (hasReadings) {
+                this.reviewQueue.push({ assignment, type: 'reading' });
+                taskCount++;
+            }
+            if (hasMeanings) {
+                this.reviewQueue.push({ assignment, type: 'meaning' });
+                taskCount++;
+            }
+            if (taskCount > 0) this.taskCounts.set(sid, taskCount);
         }
         this.shuffleArray(this.reviewQueue);
     }
@@ -260,33 +290,74 @@ class WaniKaniReviewer {
         }
     }
 
+    async markKnown() {
+        try {
+            const sid = this.currentReview.assignment.data.subject_id;
+            const tag = '#tsurukameExclude';
+            const existing = this.studyMaterials.find(m => m.data.subject_id === sid);
+            let note = existing?.data.meaning_note || '';
+            if (!note.includes(tag)) note = note ? `${note}\n${tag}` : tag;
+
+            if (existing) {
+                await this.apiPut(`/study_materials/${existing.id}`, { study_material: { meaning_note: note } });
+                existing.data.meaning_note = note;
+            } else {
+                const created = await this.apiPost('/study_materials', { study_material: { subject_id: sid, meaning_note: note } });
+                this.studyMaterials.push(created.data);
+            }
+
+            this.excludedSubjectIds.add(sid);
+            this.reviewQueue = this.reviewQueue.filter(r => r.assignment.data.subject_id !== sid);
+            this.pendingReviews.delete(sid);
+            this.nextReview();
+        } catch (e) {
+            console.error('Error marking known:', e);
+            alert('Failed to mark as known. Please try again.');
+        }
+    }
+
     async markCorrect() {
-        this.sessionStats.correct++; this.sessionStats.total++;
-        await this.sendProgress(true);
-        this.nextReview();
+        await this.recordAnswer(true);
     }
 
     async markIncorrect() {
-        this.sessionStats.incorrect++; this.sessionStats.total++;
-        await this.sendProgress(false);
+        await this.recordAnswer(false);
+    }
+
+    async recordAnswer(correct) {
+        if (correct) this.sessionStats.correct++;
+        else this.sessionStats.incorrect++;
+        this.sessionStats.total++;
+        await this.recordReviewProgress(correct);
         this.nextReview();
     }
 
-    async sendProgress(correct) {
+    async recordReviewProgress(correct) {
         try {
+            const sid = this.currentReview.assignment.data.subject_id;
+            const state = this.pendingReviews.get(sid) || { incorrectMeaning: 0, incorrectReading: 0, answeredCount: 0 };
+            if (!correct) {
+                if (this.currentTaskType === 'meaning') state.incorrectMeaning += 1;
+                if (this.currentTaskType === 'reading') state.incorrectReading += 1;
+            }
+            state.answeredCount += 1;
+            this.pendingReviews.set(sid, state);
+
+            const expected = this.taskCounts.get(sid) || 1;
+            if (state.answeredCount < expected) return;
+
             const reviewData = {
                 review: {
-                    subject_id: this.currentReview.assignment.data.subject_id,
-                    incorrect_meaning_answers: this.currentTaskType === 'meaning' && !correct ? 1 : 0,
-                    incorrect_reading_answers: this.currentTaskType === 'reading' && !correct ? 1 : 0
+                    subject_id: sid,
+                    incorrect_meaning_answers: state.incorrectMeaning,
+                    incorrect_reading_answers: state.incorrectReading
                 }
             };
-            await fetch('https://api.wanikani.com/v2/reviews', {
-                method: 'POST',
-                headers: { 'Authorization': `Token token=${this.apiToken}`, 'Content-Type': 'application/json', 'Wanikani-Revision': '20170710' },
-                body: JSON.stringify(reviewData)
-            });
-        } catch (e) { console.error('Error sending progress:', e); }
+            await this.apiPost('/reviews', reviewData);
+            this.pendingReviews.delete(sid);
+        } catch (e) {
+            console.error('Error sending progress:', e);
+        }
     }
 
     getSubject(subjectId) { return this.subjectById.get(subjectId) || this.subjects.find(s => s.id === subjectId); }
@@ -417,6 +488,7 @@ function login() { reviewer.login(); }
 function submitAnswer() { reviewer.submitAnswer(); }
 function markCorrect() { reviewer.markCorrect(); }
 function markIncorrect() { reviewer.markIncorrect(); }
+function markKnown() { reviewer.markKnown(); }
 function toggleMenu() { reviewer.toggleMenu(); }
 function showStats() { reviewer.showStats(); }
 function showExcluded() { reviewer.showExcluded(); }
