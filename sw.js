@@ -1,50 +1,70 @@
-const CACHE_NAME = 'wanikani-review-v1';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/styles.css',
-  '/app.js',
-  '/manifest.json'
+const CACHE_NAME = 'takashika-shell-v2';
+
+function appUrl(path) {
+    return new URL(path, self.location).toString();
+}
+
+const APP_SHELL = [
+    appUrl('./'),
+    appUrl('./index.html'),
+    appUrl('./styles.css'),
+    appUrl('./app.js'),
+    appUrl('./manifest.json'),
+    appUrl('./icons/app-icon.svg'),
+    appUrl('./js/answer-checker.js'),
+    appUrl('./js/audio-manager.js'),
+    appUrl('./js/review-queue.js'),
+    appUrl('./js/reviewer.js'),
+    appUrl('./js/wanikani-client.js')
 ];
 
-// Install event
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache);
-      })
-  );
+    self.skipWaiting();
+    event.waitUntil(
+        caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL))
+    );
 });
 
-// Fetch event
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        // Return cached version or fetch from network
-        if (response) {
-          return response;
-        }
-        return fetch(event.request);
-      }
-    )
-  );
-});
-
-// Activate event
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.map(cacheName => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
+    event.waitUntil((async () => {
+        const cacheNames = await caches.keys();
+        await Promise.all(
+            cacheNames
+                .filter(cacheName => cacheName !== CACHE_NAME)
+                .map(cacheName => caches.delete(cacheName))
+        );
+        await self.clients.claim();
+    })());
+});
+
+async function staleWhileRevalidate(request) {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(request);
+    const networkFetch = fetch(request)
+        .then(response => {
+            if (response.ok) cache.put(request, response.clone());
+            return response;
         })
-      );
-    })
-  );
+        .catch(() => cached);
+
+    return cached || networkFetch;
+}
+
+self.addEventListener('fetch', event => {
+    const { request } = event;
+    if (request.method !== 'GET') return;
+
+    const url = new URL(request.url);
+    if (url.origin !== self.location.origin) return;
+
+    if (request.mode === 'navigate') {
+        event.respondWith(
+            fetch(request).catch(() => caches.match(appUrl('./index.html')))
+        );
+        return;
+    }
+
+    if (APP_SHELL.includes(url.toString())) {
+        event.respondWith(staleWhileRevalidate(request));
+    }
 });

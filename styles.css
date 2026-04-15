@@ -214,6 +214,28 @@ button:active {
     border: 1px solid #e1e1e1;
 }
 
+#question-card {
+    border-top-width: 14px;
+}
+
+#question-card.meaning-mode {
+    border-top-color: #1c8adb;
+    background: linear-gradient(180deg, #f4faff 0%, #ffffff 38%);
+}
+
+#question-card.reading-mode {
+    border-top-color: #d85b26;
+    background: linear-gradient(180deg, #fff6f1 0%, #ffffff 38%);
+}
+
+.prompt-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
 .subject-type {
     font-size: 0.8rem;
     color: #666;
@@ -221,6 +243,67 @@ button:active {
     letter-spacing: 1px;
     margin-bottom: 1rem;
     font-weight: 600;
+}
+
+.audio-btn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 8px;
+    font-size: 1.2rem;
+    line-height: 1;
+    background: #eef5ff;
+    color: #1c5fb8;
+    box-shadow: none;
+}
+
+.audio-btn:hover {
+    background: #dfeefe;
+    box-shadow: none;
+    transform: none;
+}
+
+.task-mode {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    margin-bottom: 1.1rem;
+    flex-wrap: wrap;
+}
+
+.task-mode-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.38rem 0.7rem;
+    border-radius: 999px;
+    line-height: 1;
+}
+
+#question-card.meaning-mode .task-mode-label {
+    background: #d7ebff;
+    color: #155fa8;
+}
+
+#question-card.reading-mode .task-mode-label {
+    background: #ffe2d6;
+    color: #b14c1f;
+}
+
+.task-mode-copy {
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+#question-card.meaning-mode .task-mode-copy {
+    color: #155fa8;
+}
+
+#question-card.reading-mode .task-mode-copy {
+    color: #b14c1f;
 }
 
 .question-text {
@@ -260,11 +343,47 @@ button:active {
     box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
 }
 
+.answer-section input.meaning-field {
+    border-color: #8fc3f2;
+    background: #fbfdff;
+}
+
+.answer-section input.meaning-field:focus {
+    border-color: #1c8adb;
+    box-shadow: 0 0 0 3px rgba(28, 138, 219, 0.18);
+}
+
+.answer-section input.reading-field {
+    border-color: #f0b299;
+    background: #fffaf7;
+}
+
+.answer-section input.reading-field:focus {
+    border-color: #d85b26;
+    box-shadow: 0 0 0 3px rgba(216, 91, 38, 0.18);
+}
+
 .answer-section button {
     width: 100%;
     padding: 1rem;
     font-size: 1.1rem;
     background: #4A90E2;
+}
+
+.answer-section button.meaning-action {
+    background: #1c8adb;
+}
+
+.answer-section button.meaning-action:hover {
+    background: #156faf;
+}
+
+.answer-section button.reading-action {
+    background: #d85b26;
+}
+
+.answer-section button.reading-action:hover {
+    background: #bb4b1d;
 }
 
 /* Result card - WaniKani style */
@@ -322,20 +441,36 @@ button:active {
     font-weight: 600;
 }
 
-#correct-btn {
+#result-primary-btn {
+    background: #3c78d8;
+}
+
+#result-primary-btn:hover {
+    background: #2d64bc;
+}
+
+#override-correct-btn {
     background: #28a745;
 }
 
-#correct-btn:hover {
+#override-correct-btn:hover {
     background: #218838;
 }
 
-#incorrect-btn {
-    background: #dc3545;
+.secondary-action {
+    width: 100%;
+    margin-top: 1rem;
+    background: transparent;
+    color: #555;
+    box-shadow: none;
+    border: 1px solid #d7d7d7;
 }
 
-#incorrect-btn:hover {
-    background: #c82333;
+.secondary-action:hover {
+    background: #f7f7f7;
+    color: #333;
+    box-shadow: none;
+    transform: none;
 }
 
 /* Menu - Fixed positioning */
@@ -358,11 +493,17 @@ button:active {
 }
 
 .menu-item {
+    width: 100%;
     padding: 1rem 1.5rem;
     cursor: pointer;
     transition: background 0.2s ease;
     border-bottom: 1px solid #f0f0f0;
     font-weight: 500;
+    text-align: left;
+    background: transparent;
+    color: #333;
+    box-shadow: none;
+    border-radius: 0;
 }
 
 .menu-item:last-child {
@@ -470,6 +611,11 @@ button:active {
     
     .button-group {
         flex-direction: column;
+    }
+
+    .task-mode {
+        width: 100%;
+        min-width: 0;
     }
     
     .header {

@@ -7,7 +7,7 @@
     <meta name="description" content="WaniKani review app with exclusion support">
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="styles.css">
-    <link rel="icon" type="image/png" href="icons/icon-192x192.png">
+    <link rel="icon" type="image/svg+xml" href="icons/app-icon.svg">
     <meta name="theme-color" content="#4A90E2">
 </head>
 <body>
@@ -19,7 +19,7 @@
                 <p>Enter your WaniKani API token to start reviewing</p>
                 <div class="form-group">
                     <input type="password" id="api-token" placeholder="API Token" />
-                    <button id="login-btn" onclick="login()">Start Reviewing</button>
+                    <button id="login-btn">Start Reviewing</button>
                 </div>
                 <div class="help-text">
                     <p>Get your API token from <a href="https://www.wanikani.com/settings/personal_access_tokens" target="_blank">WaniKani Settings</a></p>
@@ -42,35 +42,43 @@
                     <span id="progress">0/0</span>
                     <span id="accuracy">100%</span>
                 </div>
-                <button id="menu-btn" onclick="toggleMenu()">☰</button>
+                <button id="menu-btn">☰</button>
             </div>
 
             <div class="review-container">
                 <div id="question-card" class="card">
-                    <div id="subject-type" class="subject-type"></div>
+                    <div class="prompt-meta">
+                        <div id="subject-type" class="subject-type"></div>
+                        <button id="audio-btn" class="audio-btn hidden" aria-label="Play pronunciation">🔊</button>
+                    </div>
+                    <div class="task-mode">
+                        <span id="task-mode-label" class="task-mode-label"></span>
+                        <span id="task-mode-copy" class="task-mode-copy"></span>
+                    </div>
                     <div id="question-text" class="question-text"></div>
                     <div id="question-hint" class="question-hint"></div>
                 </div>
 
                 <div class="answer-section">
                     <input type="text" id="answer-input" placeholder="Type your answer..." />
-                    <button id="submit-btn" onclick="submitAnswer()">Submit</button>
+                    <button id="submit-btn">Submit</button>
                 </div>
 
                 <div id="result-card" class="card hidden">
                     <div id="result-text" class="result-text"></div>
                     <div id="correct-answer" class="correct-answer"></div>
                     <div class="button-group">
-                        <button id="correct-btn" onclick="markCorrect()">Correct</button>
-                        <button id="incorrect-btn" onclick="markIncorrect()">Incorrect</button>
+                        <button id="result-primary-btn">Continue</button>
+                        <button id="override-correct-btn" class="hidden">My answer was correct, okay</button>
                     </div>
+                    <button id="ask-later-btn" class="secondary-action hidden">Ask again later</button>
                 </div>
             </div>
 
             <div id="menu" class="menu hidden">
-                <div class="menu-item" onclick="showStats()">Statistics</div>
-                <div class="menu-item" onclick="showExcluded()">Excluded Items</div>
-                <div class="menu-item" onclick="logout()">Logout</div>
+                <button id="stats-btn" class="menu-item">Statistics</button>
+                <button id="excluded-btn" class="menu-item">Excluded Items</button>
+                <button id="logout-btn" class="menu-item">Logout</button>
             </div>
         </div>
 
@@ -92,7 +100,7 @@
                         <div class="stat-label">Accuracy</div>
                     </div>
                 </div>
-                <button onclick="backToReview()">Back to Review</button>
+                <button id="stats-back-btn">Back to Review</button>
             </div>
         </div>
 
@@ -103,12 +111,11 @@
                 <div id="excluded-list" class="excluded-list">
                     <!-- Excluded items will be populated here -->
                 </div>
-                <button onclick="backToReview()">Back to Review</button>
+                <button id="excluded-back-btn">Back to Review</button>
             </div>
         </div>
     </div>
 
-    <script src="app.js"></script>
-    <script src="sw.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
 </html>
