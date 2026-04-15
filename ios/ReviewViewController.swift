@@ -1,4 +1,4 @@
-// Copyright 2025 David Sansome
+// Copyright 2026 David Sansome
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ private let kPreviousSubjectAnimationDuration: Double = 0.3
 private let kReadingTextColor = UIColor.white
 private let kMeaningTextColor = UIColor(red: 0.333, green: 0.333, blue: 0.333, alpha: 1.0)
 private let kDefaultButtonTintColor = UIButton().tintColor
+private let kOverrideAnswerButtonTitle = "My answer was correct, okay"
 
 // If the keyboard height changes by less than this amount, the question label will stay where it
 // is.
@@ -173,11 +174,12 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
   private var showSubjectHistory: Bool!
   private weak var delegate: ReviewViewControllerDelegate!
 
-  private var session: ReviewSession!
+  var session: ReviewSession!
 
   private var lastMarkAnswerWasFirstTime = false
   private var ankiModeCachedSubmit = false
   private var isAnimatingSubjectDetailsView = false
+  private var showingOverrideCorrectButton = false
 
   private var previousSubjectGradient: CAGradientLayer!
 
@@ -194,6 +196,7 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
   private var currentFontName: String!
   private var availableFonts: [String]?
   private var defaultFontSize: Double!
+  private let overrideCorrectButton = UIButton(type: .system)
 
   @IBOutlet private var menuButton: UIButton!
   @IBOutlet private var questionBackground: GradientView!
@@ -289,6 +292,10 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
     answerField.autocapitalizationType = .none
     answerField.delegate = kanaInput
     answerField.addAction(for: .editingChanged) { [weak self] in self?.answerFieldValueDidChange() }
+    answerField.layer.borderWidth = 3.0
+    answerField.layer.masksToBounds = true
+
+    configureOverrideCorrectButton()
 
     let showSuccessRate = delegate.showsSuccessRate()
     successRateIcon.isHidden = !showSuccessRate
@@ -331,6 +338,11 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
           .colors = TKMStyle.gradient(forAssignment: session.activeAssignment)
         promptBackground.colors = session.activeTaskType == .meaning ? TKMStyle
           .meaningGradient : TKMStyle.readingGradient
+        if let taskType = session.activeTaskType {
+          applyAnswerFieldAppearance(taskType: taskType,
+                                     placeholder: answerField.attributedPlaceholder?.string ??
+                                       answerField.placeholder ?? "")
+        }
       }
       if previousTraitCollection.preferredContentSizeCategory != traitCollection
         .preferredContentSizeCategory {
@@ -483,6 +495,87 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
     perform(segue: StoryboardSegue.Review.reviewSummary, sender: self)
   }
 
+  private func configureOverrideCorrectButton() {
+    overrideCorrectButton.translatesAutoresizingMaskIntoConstraints = false
+    overrideCorrectButton.isHidden = true
+    overrideCorrectButton.alpha = 0.0
+    overrideCorrectButton.setTitle(kOverrideAnswerButtonTitle, for: .normal)
+    overrideCorrectButton.titleLabel?.font = UIFont.preferredFont(forTextStyle: .headline)
+    overrideCorrectButton.titleLabel?.adjustsFontSizeToFitWidth = true
+    overrideCorrectButton.titleLabel?.minimumScaleFactor = 0.8
+    overrideCorrectButton.addTarget(self, action: #selector(markCorrect), for: .touchUpInside)
+
+    if #available(iOS 15.0, *) {
+      var configuration = UIButton.Configuration.filled()
+      configuration.baseBackgroundColor = TKMStyle.defaultTintColor
+      configuration.baseForegroundColor = .white
+      configuration.cornerStyle = .medium
+      configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 18,
+                                                            bottom: 12, trailing: 18)
+      configuration.title = kOverrideAnswerButtonTitle
+      overrideCorrectButton.configuration = configuration
+    } else {
+      overrideCorrectButton.backgroundColor = TKMStyle.defaultTintColor
+      overrideCorrectButton.setTitleColor(.white, for: .normal)
+      overrideCorrectButton.contentEdgeInsets = UIEdgeInsets(top: 12, left: 18,
+                                                             bottom: 12, right: 18)
+      overrideCorrectButton.layer.cornerRadius = 8.0
+    }
+
+    view.addSubview(overrideCorrectButton)
+    NSLayoutConstraint.activate([
+      overrideCorrectButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      overrideCorrectButton.bottomAnchor.constraint(equalTo: promptBackground.topAnchor,
+                                                    constant: -12),
+      overrideCorrectButton.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide
+        .leadingAnchor, constant: 16),
+      overrideCorrectButton.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide
+        .trailingAnchor, constant: -16),
+    ])
+  }
+
+  private func applyAnswerFieldAppearance(taskType: TaskType, placeholder: String) {
+    let borderColor: UIColor
+    switch taskType {
+    case .meaning:
+      borderColor = TKMStyle.Color.grey33
+    case .reading:
+      borderColor = TKMStyle.vocabularyColor1
+    }
+
+    let backgroundAlpha: CGFloat = traitCollection.userInterfaceStyle == .dark ? 0.22 : 0.12
+    answerField.backgroundColor = borderColor.withAlphaComponent(backgroundAlpha)
+    answerField.layer.borderColor = borderColor.cgColor
+    answerField.tintColor = borderColor
+    answerField.attributedPlaceholder = NSAttributedString(string: placeholder,
+                                                           attributes: [
+                                                             .foregroundColor: borderColor
+                                                               .withAlphaComponent(0.9),
+                                                           ])
+    answerField.accessibilityHint = placeholder
+  }
+
+  private func setOverrideCorrectButtonVisible(_ visible: Bool, animated: Bool) {
+    let updates = {
+      self.overrideCorrectButton.alpha = visible ? 1.0 : 0.0
+    }
+
+    if visible {
+      overrideCorrectButton.isHidden = false
+    }
+
+    if animated {
+      UIView.animate(withDuration: animationDuration, animations: updates) { _ in
+        if !visible {
+          self.overrideCorrectButton.isHidden = true
+        }
+      }
+    } else {
+      updates()
+      overrideCorrectButton.isHidden = !visible
+    }
+  }
+
   // MARK: - Setup
 
   private func randomTask() {
@@ -499,6 +592,9 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
 
   private func updateViewForCurrentTask(updateFirstResponder: Bool = true) {
     TKMStyle.withTraitCollection(traitCollection) {
+      self.setOverrideCorrectButtonVisible(false, animated: false)
+      self.showingOverrideCorrectButton = false
+
       // Update the progress labels.
       let queueLength = Int(session.activeQueueLength + session.reviewQueueLength)
       let doneText = String(session.reviewsCompleted)
@@ -519,7 +615,6 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
       var taskTypePrompt: String
       var promptGradient: [CGColor]
       var promptTextColor: UIColor
-      var taskTypePlaceholder: String
 
       switch session.activeAssignment.subjectType {
       case .kanji:
@@ -531,25 +626,23 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
       default:
         fatalError()
       }
+      if let firstReading = session.activeSubject.primaryReadings.first {
+        kanaInput.alphabet = (firstReading.hasType && firstReading.type == .onyomi &&
+          Settings.useKatakanaForOnyomi) ? .katakana : .hiragana
+      } else {
+        kanaInput.alphabet = .hiragana
+      }
       switch session.activeTaskType! {
       case .meaning:
         kanaInput.enabled = false
         taskTypePrompt = session.activeAssignment.subjectType == .radical ? "Name" : "Meaning"
         promptGradient = TKMStyle.meaningGradient
         promptTextColor = kMeaningTextColor
-        taskTypePlaceholder = "Your Response"
-        if Settings.ankiMode {
-          taskTypePlaceholder = "Show answer"
-        }
       case .reading:
         kanaInput.enabled = true
         taskTypePrompt = "Reading"
         promptGradient = TKMStyle.readingGradient
         promptTextColor = kReadingTextColor
-        taskTypePlaceholder = "答え"
-        if Settings.ankiMode {
-          taskTypePlaceholder = "答えを見せる"
-        }
       }
 
       if session.activeAssignment.subjectType != .radical,
@@ -562,7 +655,8 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
       currentFontName = randomFont(thatCanRenderText: session.activeSubject.japanese)
 
       let boldFont = UIFont.boldSystemFont(ofSize: promptLabel!.font.pointSize)
-      let prompt = NSMutableAttributedString(string: subjectTypePrompt + " " + taskTypePrompt)
+      let prompt =
+        NSMutableAttributedString(string: "\(subjectTypePrompt) \(taskTypePrompt)")
       prompt.setAttributes([NSAttributedString.Key.font: boldFont],
                            range: NSRange(location: prompt.length - taskTypePrompt.count,
                                           length: taskTypePrompt.count))
@@ -596,17 +690,17 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
 
       answerField.text = nil
       answerField.textColor = TKMStyle.Color.label
-      answerField.backgroundColor = TKMStyle.Color.background
-      answerField.placeholder = taskTypePlaceholder
-      if let firstReading = session.activeSubject.primaryReadings.first {
-        kanaInput.alphabet = (firstReading.hasType && firstReading.type == .onyomi &&
-          Settings.useKatakanaForOnyomi) ? .katakana : .hiragana
-      } else {
-        kanaInput.alphabet = .hiragana
-      }
+      applyAnswerFieldAppearance(taskType: session.activeTaskType,
+                                 placeholder: "Your Response")
 
       answerField.useJapaneseKeyboard = Settings
         .autoSwitchKeyboard && session.activeTaskType == .reading
+
+      if Settings.playAudioAutomatically, session.activeTaskType == .reading,
+         let subject = session.activeSubject,
+         subject.hasVocabulary, !subject.vocabulary.audio.isEmpty {
+        services.audio.preload(subjectID: subject.id)
+      }
 
       if Settings.showSRSLevelIndicator {
         levelLabel.attributedText = getDots(stage: session.activeAssignment.srsStage)
@@ -714,6 +808,9 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
 
     if shown {
       subjectDetailsView.isHidden = false
+      if showingOverrideCorrectButton {
+        overrideCorrectButton.isHidden = false
+      }
       if cheats, !Settings.ankiMode {
         addSynonymButton.isHidden = false
       }
@@ -784,6 +881,7 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
       addSynonymButton.alpha = shown ? 1.0 : 0.0
     }
     revealAnswerButton.alpha = 0.0
+    overrideCorrectButton.alpha = shown && showingOverrideCorrectButton ? 1.0 : 0.0
     previousSubjectLabel?.alpha = shown ? 0.0 : 1.0
     previousSubjectButton.alpha = shown ? 0.0 : 1.0
 
@@ -805,6 +903,7 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
     isAnimatingSubjectDetailsView = false
 
     revealAnswerButton.isHidden = true
+    overrideCorrectButton.isHidden = !(ctx.subjectDetailsViewShown && showingOverrideCorrectButton)
     if ctx.subjectDetailsViewShown {
       previousSubjectLabel?.isHidden = true
       previousSubjectButton.isHidden = true
@@ -1025,6 +1124,11 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
     answerField.text = nil
     answerField.textColor = TKMStyle.Color.label
     answerField.isEnabled = true
+    showingOverrideCorrectButton = false
+    revealAnswerButton.isHidden = true
+    revealAnswerButton.alpha = 0.0
+    setOverrideCorrectButtonVisible(false, animated: false)
+    submitButton.setImage(Settings.allowSkippingReviews ? skipImage : tickImage, for: .normal)
     answerField.becomeFirstResponder()
   }
 
@@ -1149,13 +1253,16 @@ class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelega
     }
 
     // Otherwise show the correct answer.
+    showingOverrideCorrectButton = true
     if !Settings.showAnswerImmediately, !Settings.ankiMode {
       revealAnswerButton.isHidden = false
+      setOverrideCorrectButtonVisible(true, animated: false)
       UIView.animate(withDuration: animationDuration,
                      animations: {
                        self.answerField.textColor = .systemRed
                        self.answerField.isEnabled = false
                        self.revealAnswerButton.alpha = 1.0
+                       self.overrideCorrectButton.alpha = 1.0
                        self.submitButton.setImage(self.forwardArrowImage, for: .normal)
                      })
     } else {

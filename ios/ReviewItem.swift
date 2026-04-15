@@ -1,4 +1,4 @@
-// Copyright 2025 David Sansome
+// Copyright 2026 David Sansome
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,6 +39,10 @@ class ReviewItem: NSObject {
         continue
       }
       if !showKanaOnlyVocab, assignment.isKanaOnlyVocab {
+        continue
+      }
+      if let studyMaterials = localCachingClient.getStudyMaterial(subjectId: assignment.subjectID),
+         localCachingClient.isExcluded(studyMaterials: studyMaterials) {
         continue
       }
       if !isIncluded(assignment) {

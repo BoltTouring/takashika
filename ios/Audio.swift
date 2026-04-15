@@ -1,4 +1,4 @@
-// Copyright 2025 David Sansome
+// Copyright 2026 David Sansome
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 import AVFoundation
 import Foundation
+import WaniKaniAPI
 
 protocol AudioDelegate: NSObject {
   func audioPlaybackStateChanged(state: Audio.PlaybackState)
@@ -28,7 +29,11 @@ class Audio: NSObject {
 
   private let services: TKMServices
   private var player: AVPlayer?
-  private var lastPlayedAudioIndex: Int = 0
+  private var lastPlayedSubjectID: Int64?
+  private var lastPlayedAudioIndex: Int = -1
+  private var preloadedSubjectID: Int64?
+  private var preloadedAudioIndex: Int?
+  private var preloadedAsset: AVURLAsset?
   private var waitingToPlay = false
   private weak var delegate: AudioDelegate?
 
@@ -81,37 +86,64 @@ class Audio: NSObject {
     if !subject.hasVocabulary || subject.vocabulary.audio.isEmpty {
       return
     }
-    let offline = services.offlineAudio!
-
-    lastPlayedAudioIndex += 1
-    if lastPlayedAudioIndex >= subject.vocabulary.audio.count {
-      lastPlayedAudioIndex = 0
-    }
-    let audio = subject.vocabulary.audio[lastPlayedAudioIndex]
-
-    // Is the audio available offline?
-    if offline.isCached(subjectId: subject.id, voiceActorId: audio.voiceActorID) {
-      play(url: offline.cacheUrl(subjectId: subject.id, voiceActorId: audio.voiceActorID),
-           delegate: delegate)
+    guard let selection = nextAudioSelection(for: subject) else {
+      if !services.reachability.isReachable() {
+        showOfflineDialog()
+      }
       return
     }
 
-    // Maybe one of the other voice actors' audio is available offline.
-    for (index, audio) in subject.vocabulary.audio.enumerated() {
+    lastPlayedSubjectID = subject.id
+    lastPlayedAudioIndex = selection.index
+    play(url: selection.url, delegate: delegate)
+  }
+
+  func preload(subjectID: Int64) {
+    guard let subject = services.localCachingClient.getSubject(id: subjectID),
+          subject.hasVocabulary, !subject.vocabulary.audio.isEmpty,
+          let selection = preferredAudioSelection(for: subject, startIndex: 0)
+    else {
+      return
+    }
+
+    if preloadedSubjectID == subject.id, preloadedAudioIndex == selection.index {
+      return
+    }
+
+    preloadedSubjectID = subject.id
+    preloadedAudioIndex = selection.index
+    let asset = AVURLAsset(url: selection.url)
+    preloadedAsset = asset
+    asset.loadValuesAsynchronously(forKeys: ["playable"], completionHandler: {})
+  }
+
+  private func nextAudioSelection(for subject: TKMSubject) -> (index: Int, url: URL)? {
+    let startIndex = lastPlayedSubjectID == subject.id ? lastPlayedAudioIndex + 1 : 0
+    return preferredAudioSelection(for: subject, startIndex: startIndex)
+  }
+
+  private func preferredAudioSelection(for subject: TKMSubject,
+                                       startIndex: Int) -> (index: Int, url: URL)? {
+    let audioCount = subject.vocabulary.audio.count
+    guard audioCount > 0 else {
+      return nil
+    }
+
+    let offline = services.offlineAudio!
+    for offset in 0 ..< audioCount {
+      let index = (startIndex + offset) % audioCount
+      let audio = subject.vocabulary.audio[index]
       if offline.isCached(subjectId: subject.id, voiceActorId: audio.voiceActorID) {
-        lastPlayedAudioIndex = index
-        play(url: offline.cacheUrl(subjectId: subject.id, voiceActorId: audio.voiceActorID),
-             delegate: delegate)
-        return
+        return (index, offline.cacheUrl(subjectId: subject.id, voiceActorId: audio.voiceActorID))
       }
     }
 
-    if !services.reachability.isReachable() {
-      showOfflineDialog()
-      return
+    guard services.reachability.isReachable() else {
+      return nil
     }
 
-    play(url: URL(string: audio.url)!, delegate: delegate)
+    let index = startIndex % audioCount
+    return (index, URL(string: subject.vocabulary.audio[index].url)!)
   }
 
   private func play(url: URL, delegate: AudioDelegate?) {
@@ -123,7 +155,17 @@ class Audio: NSObject {
       player?.addObserver(self, forKeyPath: "currentItem.status", options: [], context: nil)
     }
 
-    player?.replaceCurrentItem(with: AVPlayerItem(url: url))
+    let item: AVPlayerItem
+    if let preloadedAsset = preloadedAsset, preloadedAsset.url == url {
+      item = AVPlayerItem(asset: preloadedAsset)
+    } else {
+      item = AVPlayerItem(url: url)
+    }
+
+    player?.replaceCurrentItem(with: item)
+    preloadedSubjectID = nil
+    preloadedAudioIndex = nil
+    preloadedAsset = nil
     waitingToPlay = true
   }
 
