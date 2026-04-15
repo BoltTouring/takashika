@@ -31,13 +31,17 @@ export function buildReviewQueue(assignments, excludedSubjectIds, getSubject, op
         const subject = getSubject(subjectId);
         if (!subject) continue;
 
-        if (subject.object === 'radical') {
-            if (hasAcceptedMeanings(subject)) queue.push({ assignment, type: 'meaning' });
-            continue;
-        }
+        const hasMeaning = hasAcceptedMeanings(subject);
+        const hasReading = subject.object !== 'radical' && hasAcceptedReadings(subject);
+        if (!hasMeaning && !hasReading) continue;
 
-        if (hasAcceptedReadings(subject)) queue.push({ assignment, type: 'reading' });
-        if (hasAcceptedMeanings(subject)) queue.push({ assignment, type: 'meaning' });
+        queue.push({
+            assignment,
+            answeredMeaning: false,
+            answeredReading: false,
+            incorrectMeaningAnswers: 0,
+            incorrectReadingAnswers: 0
+        });
     }
 
     return shuffleArray(queue, random);

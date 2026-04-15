@@ -35,9 +35,9 @@ export class AudioManager {
     }
 
     primeNext(queue, getSubject) {
-        const nextReadingReview = queue.find(item => item.type === 'reading');
-        if (!nextReadingReview) return;
-        const nextSubject = getSubject(nextReadingReview.assignment.data.subject_id);
+        const nextReview = queue[0];
+        if (!nextReview) return;
+        const nextSubject = getSubject(nextReview.assignment.data.subject_id);
         if (nextSubject) this.primeForSubject(nextSubject);
     }
 

@@ -16,7 +16,7 @@ export class WaniKaniReviewer {
         this.studyMaterials = [];
         this.studyMaterialBySubjectId = new Map();
         this.excludedSubjectIds = new Set();
-        this.currentReview = null; // { assignment, type: 'meaning'|'reading' }
+        this.currentReview = null;
         this.reviewQueue = [];
         this.sessionStats = { total: 0, correct: 0, incorrect: 0 };
         this.currentTaskType = null;
@@ -24,6 +24,7 @@ export class WaniKaniReviewer {
         this.isComposing = false;
         this.menuTopPx = 80;
         this.audioManager = new AudioManager();
+        this.completedReviewItems = 0;
     }
 
     async init() {
@@ -112,6 +113,7 @@ export class WaniKaniReviewer {
                 this.excludedSubjectIds,
                 subjectId => this.getSubject(subjectId)
             );
+            this.completedReviewItems = 0;
 
             this.showScreen('review');
             this.nextReview();
@@ -150,12 +152,27 @@ export class WaniKaniReviewer {
             return;
         }
 
-        this.currentTaskType = this.currentReview.type;
+        this.currentTaskType = this.getNextTaskType(subject, this.currentReview);
         this.currentResultIsCorrect = null;
         this.audioManager.primeForSubject(subject);
         this.audioManager.primeNext(this.reviewQueue, subjectId => this.getSubject(subjectId));
         this.displayQuestion(subject);
         this.updateProgress();
+    }
+
+    getNextTaskType(subject, reviewItem) {
+        const hasMeanings = AnswerChecker.getAcceptedMeanings(subject).length > 0;
+        const hasReadings = subject.object !== 'radical' && AnswerChecker.getAcceptedReadings(subject).length > 0;
+
+        if (reviewItem.answeredMeaning || !hasMeanings) return 'reading';
+        if (reviewItem.answeredReading || !hasReadings) return 'meaning';
+        return hasReadings ? 'reading' : 'meaning';
+    }
+
+    isReviewItemFinished(subject, reviewItem) {
+        const hasMeanings = AnswerChecker.getAcceptedMeanings(subject).length > 0;
+        const hasReadings = subject.object !== 'radical' && AnswerChecker.getAcceptedReadings(subject).length > 0;
+        return (!hasMeanings || reviewItem.answeredMeaning) && (!hasReadings || reviewItem.answeredReading);
     }
 
     displayQuestion(subject) {
@@ -270,15 +287,18 @@ export class WaniKaniReviewer {
         if (this.shouldAutoPlayAudio(subject)) this.audioManager.playForSubject(subject);
         this.sessionStats.correct += 1;
         this.sessionStats.total += 1;
-        await this.sendProgress(true);
-        this.nextReview();
+        if (this.currentTaskType === 'meaning') this.currentReview.answeredMeaning = true;
+        else this.currentReview.answeredReading = true;
+        await this.advanceAfterAnswer(subject);
     }
 
     async markIncorrect() {
+        const subject = this.getSubject(this.currentReview.assignment.data.subject_id);
         this.sessionStats.incorrect += 1;
         this.sessionStats.total += 1;
-        await this.sendProgress(false);
-        this.nextReview();
+        if (this.currentTaskType === 'meaning') this.currentReview.incorrectMeaningAnswers += 1;
+        else this.currentReview.incorrectReadingAnswers += 1;
+        await this.advanceAfterAnswer(subject);
     }
 
     continueAfterResult() {
@@ -288,16 +308,34 @@ export class WaniKaniReviewer {
 
     askAgainLater() {
         if (!this.currentReview) return;
+        this.currentReview.answeredMeaning = false;
+        this.currentReview.answeredReading = false;
+        this.currentReview.incorrectMeaningAnswers = 0;
+        this.currentReview.incorrectReadingAnswers = 0;
         this.reviewQueue.push(this.currentReview);
         this.nextReview();
     }
 
-    async sendProgress(correct) {
+    async advanceAfterAnswer(subject) {
+        if (this.isReviewItemFinished(subject, this.currentReview)) {
+            await this.sendProgress(this.currentReview);
+            this.completedReviewItems += 1;
+            this.nextReview();
+            return;
+        }
+
+        this.currentTaskType = this.getNextTaskType(subject, this.currentReview);
+        this.currentResultIsCorrect = null;
+        this.displayQuestion(subject);
+        this.updateProgress();
+    }
+
+    async sendProgress(reviewItem) {
         try {
             await this.client.createReview({
-                subjectId: this.currentReview.assignment.data.subject_id,
-                incorrectMeaningAnswers: this.currentTaskType === 'meaning' && !correct ? 1 : 0,
-                incorrectReadingAnswers: this.currentTaskType === 'reading' && !correct ? 1 : 0
+                subjectId: reviewItem.assignment.data.subject_id,
+                incorrectMeaningAnswers: reviewItem.incorrectMeaningAnswers,
+                incorrectReadingAnswers: reviewItem.incorrectReadingAnswers
             });
         } catch (error) {
             console.error('Error sending progress:', error);
@@ -323,9 +361,9 @@ export class WaniKaniReviewer {
     updateProgress() {
         const progressEl = document.getElementById('progress');
         const accuracyEl = document.getElementById('accuracy');
-        const remaining = this.reviewQueue.length + 1;
-        const total = this.sessionStats.total + remaining;
-        progressEl.textContent = `${this.sessionStats.total + 1}/${total}`;
+        const remaining = this.reviewQueue.length + (this.currentReview ? 1 : 0);
+        const total = this.completedReviewItems + remaining;
+        progressEl.textContent = total > 0 ? `${this.completedReviewItems + 1}/${total}` : '0/0';
 
         const accuracy = this.sessionStats.total > 0
             ? Math.round((this.sessionStats.correct / this.sessionStats.total) * 100)

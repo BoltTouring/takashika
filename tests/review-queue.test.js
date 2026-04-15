@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { buildReviewQueue } from '../js/review-queue.js';
 
-test('builds separate reading and meaning reviews for non-radicals', () => {
+test('builds one review item per assignment', () => {
     const now = new Date('2026-04-15T00:00:00Z');
     const assignments = [
         { data: { subject_id: 1, available_at: '2026-04-14T00:00:00Z', srs_stage: 1 } },
@@ -27,9 +27,16 @@ test('builds separate reading and meaning reviews for non-radicals', () => {
     });
 
     assert.deepEqual(
-        queue.map(item => [item.assignment.data.subject_id, item.type]),
-        [[2, 'reading'], [2, 'meaning'], [1, 'meaning']]
+        queue.map(item => item.assignment.data.subject_id),
+        [2, 1]
     );
+    assert.deepEqual(queue[0], {
+        assignment: assignments[1],
+        answeredMeaning: false,
+        answeredReading: false,
+        incorrectMeaningAnswers: 0,
+        incorrectReadingAnswers: 0
+    });
 });
 
 test('skips excluded or unavailable reviews', () => {
@@ -58,7 +65,7 @@ test('skips excluded or unavailable reviews', () => {
     assert.equal(queue.length, 0);
 });
 
-test('excluded subject ids suppress both reading and meaning prompts', () => {
+test('excluded subject ids suppress review items entirely', () => {
     const now = new Date('2026-04-15T00:00:00Z');
     const assignments = [
         { data: { subject_id: 9, available_at: '2026-04-14T00:00:00Z', srs_stage: 1 } }
