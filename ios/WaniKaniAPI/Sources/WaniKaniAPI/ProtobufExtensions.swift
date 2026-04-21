@@ -1,4 +1,4 @@
-// Copyright 2025 David Sansome
+// Copyright 2026 David Sansome
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -196,12 +196,17 @@ public extension TKMSubject {
     }
 
     #if canImport(UIKit)
+      guard let image = UIImage(named: "radical-\(id)") else {
+        NSLog("Missing bundled radical image asset: radical-%lld", id)
+        return NSAttributedString(string: "")
+      }
+
       let imageAttachment = NSTextAttachment()
-      imageAttachment.image = UIImage(named: "radical-\(id)")
+      imageAttachment.image = image
 
       var size = imageSize
       if size == 0 {
-        size = imageAttachment.image?.size.width ?? 0
+        size = image.size.width
       }
       imageAttachment.bounds = CGRect(x: 0, y: 0, width: size, height: size)
       return NSAttributedString(attachment: imageAttachment)

@@ -100,6 +100,7 @@ internal enum Asset {
   internal static let radical8798 = ImageAsset(name: "radical-8798")
   internal static let radical8799 = ImageAsset(name: "radical-8799")
   internal static let radical8819 = ImageAsset(name: "radical-8819")
+  internal static let radical9452 = ImageAsset(name: "radical-9452")
   internal static let refresh = ImageAsset(name: "refresh")
   internal static let thumb = ImageAsset(name: "thumb")
   internal static let tick = ImageAsset(name: "tick")
