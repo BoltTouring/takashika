@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="32700.99.1234" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="thM-jC-nT8">
+    <device id="retina6_1" orientation="portrait" appearance="light"/>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="22685"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <!--Settings-->
+        <scene sceneID="3hY-tc-sfR">
+            <objects>
+                <tableViewController title="Settings" id="thM-jC-nT8" customClass="SettingsViewController" customModule="Tsurukame" sceneMemberID="viewController">
+                    <tableView key="view" clipsSubviews="YES" contentMode="scaleToFill" alwaysBounceVertical="YES" dataMode="prototypes" style="insetGrouped" separatorStyle="default" rowHeight="-1" estimatedRowHeight="-1" sectionHeaderHeight="18" sectionFooterHeight="18" id="CVb-cb-bd0">
+                        <rect key="frame" x="0.0" y="0.0" width="414" height="896"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <gestureRecognizers/>
+                        <sections/>
+                        <connections>
+                            <outlet property="dataSource" destination="thM-jC-nT8" id="RbQ-jw-iag"/>
+                            <outlet property="delegate" destination="thM-jC-nT8" id="Hcc-Bh-TNN"/>
+                        </connections>
+                    </tableView>
+                    <navigationItem key="navigationItem" title="Settings" id="Xvt-Ye-m4V"/>
+                    <connections>
+                        <outlet property="tableView" destination="CVb-cb-bd0" id="iDC-La-2N5"/>
+                        <segue destination="oyh-sa-uAP" kind="show" identifier="appSettings" id="g2V-3g-Env"/>
+                        <segue destination="Glp-Dz-Itc" kind="show" identifier="reviewSettings" id="Ibk-bS-Yqa"/>
+                        <segue destination="rTl-3x-yib" kind="show" identifier="lessonSettings" id="T7f-dZ-c3m"/>
+                        <segue destination="WVN-um-g89" kind="show" identifier="subjectDetailsSettings" id="nhS-Ln-Pru"/>
+                    </connections>
+                </tableViewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="UFO-Ke-JcM" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="-1900" y="-657"/>
+        </scene>
+        <!--AppSettings-->
+        <scene sceneID="cum-bP-uev">
+            <objects>
+                <viewControllerPlaceholder storyboardName="AppSettings" id="oyh-sa-uAP" sceneMemberID="viewController">
+                    <navigationItem key="navigationItem" id="5MB-cf-t6a"/>
+                </viewControllerPlaceholder>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="Ixt-2N-L0d" userLabel="First Responder" customClass="UIResponder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="-1206" y="-788"/>
+        </scene>
+        <!--SubjectDetailsSettings-->
+        <scene sceneID="ddy-9T-95R">
+            <objects>
+                <viewControllerPlaceholder storyboardName="SubjectDetailsSettings" id="WVN-um-g89" sceneMemberID="viewController">
+                    <navigationItem key="navigationItem" id="x1e-ss-jTK"/>
+                </viewControllerPlaceholder>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="Ofh-ba-1yw" userLabel="First Responder" customClass="UIResponder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="-1160" y="-677"/>
+        </scene>
+        <!--LessonSettings-->
+        <scene sceneID="BRG-yT-oR0">
+            <objects>
+                <viewControllerPlaceholder storyboardName="LessonSettings" id="rTl-3x-yib" sceneMemberID="viewController">
+                    <navigationItem key="navigationItem" id="Tn5-tf-AKZ"/>
+                </viewControllerPlaceholder>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="dD8-Xa-ewK" userLabel="First Responder" customClass="UIResponder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="-1193" y="-751"/>
+        </scene>
+        <!--ReviewSettings-->
+        <scene sceneID="sqa-uL-Zrj">
+            <objects>
+                <viewControllerPlaceholder storyboardName="ReviewSettings" id="Glp-Dz-Itc" sceneMemberID="viewController">
+                    <navigationItem key="navigationItem" id="DAl-9F-JET"/>
+                </viewControllerPlaceholder>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="dul-7b-YnN" userLabel="First Responder" customClass="UIResponder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="-1193" y="-715"/>
+        </scene>
+    </scenes>
+</document>

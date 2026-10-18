@@ -1,0 +1,1606 @@
+// Copyright 2026 David Sansome
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import Foundation
+import WaniKaniAPI
+
+private let kDefaultAnimationDuration: TimeInterval = 0.25
+// Undocumented, but it's what the keyboard animations use.
+private let kDefaultAnimationCurve = UIView.AnimationCurve(rawValue: 7)!
+
+private let kPreviousSubjectScale: CGFloat = 0.25
+private let kPreviousSubjectButtonPadding: CGFloat = 6.0
+private let kPreviousSubjectAnimationDuration: Double = 0.3
+
+private let kReadingTextColor = UIColor.white
+private let kMeaningTextColor = UIColor(red: 0.333, green: 0.333, blue: 0.333, alpha: 1.0)
+private let kDefaultButtonTintColor = UIButton().tintColor
+private let kOverrideAnswerButtonTitle = "My answer was correct"
+
+// If the keyboard height changes by less than this amount, the question label will stay where it
+// is.
+private let kSmallKeyboardHeightChange: CGFloat = 50.0
+
+enum AnswerResult {
+  case Correct
+  case Incorrect
+  case OverrideAnswerCorrect
+  case AskAgainLater
+  case Exclude
+
+  var correct: Bool {
+    self == .Correct || self == .OverrideAnswerCorrect
+  }
+}
+
+private func copyLabel(_ original: UILabel) -> UILabel {
+  let copy = UILabel()
+  copy.isHidden = original.isHidden
+  copy.transform = original.transform
+  copy.bounds = original.bounds
+  copy.center = original.center
+  copy.attributedText = original.attributedText
+  copy.font = original.font
+  copy.textColor = original.textColor
+  copy.textAlignment = original.textAlignment
+  original.superview?.addSubview(copy)
+  return copy
+}
+
+private let kDotColorApprentice = UIColor(red: 0.87, green: 0.00, blue: 0.58, alpha: 1.0)
+private let kDotColorGuru = UIColor(red: 0.53, green: 0.18, blue: 0.62, alpha: 1.0)
+private let kDotColorMaster = UIColor(red: 0.16, green: 0.30, blue: 0.86, alpha: 1.0)
+private let kDotColorEnlightened = UIColor(red: 0.00, green: 0.58, blue: 0.87, alpha: 1.0)
+private let kDotColorBurned = UIColor(red: 0.26, green: 0.26, blue: 0.26, alpha: 1.0)
+
+private func getDots(stage: SRSStage) -> NSAttributedString? {
+  var string: NSMutableAttributedString?
+  switch stage {
+  case .apprentice1:
+    string = NSMutableAttributedString(string: "•◦◦◦",
+                                       attributes: [.foregroundColor: kDotColorApprentice])
+  case .apprentice2:
+    string = NSMutableAttributedString(string: "••◦◦",
+                                       attributes: [.foregroundColor: kDotColorApprentice])
+  case .apprentice3:
+    string = NSMutableAttributedString(string: "•••◦",
+                                       attributes: [.foregroundColor: kDotColorApprentice])
+  case .apprentice4:
+    string = NSMutableAttributedString(string: "••••◦",
+                                       attributes: [.foregroundColor: kDotColorApprentice])
+    string?
+      .addAttribute(.foregroundColor, value: kDotColorGuru, range: NSRange(location: 4, length: 1))
+  case .guru1:
+    string = NSMutableAttributedString(string: "•◦", attributes: [.foregroundColor: kDotColorGuru])
+  case .guru2:
+    string = NSMutableAttributedString(string: "••◦", attributes: [.foregroundColor: kDotColorGuru])
+    string?
+      .addAttribute(.foregroundColor, value: kDotColorMaster,
+                    range: NSRange(location: 2, length: 1))
+  case .master:
+    string = NSMutableAttributedString(string: "•◦",
+                                       attributes: [.foregroundColor: kDotColorMaster])
+    string?
+      .addAttribute(.foregroundColor, value: kDotColorEnlightened,
+                    range: NSRange(location: 1, length: 1))
+  case .enlightened:
+    string = NSMutableAttributedString(string: "•◦",
+                                       attributes: [.foregroundColor: kDotColorEnlightened])
+    string?
+      .addAttribute(.foregroundColor, value: kDotColorBurned,
+                    range: NSRange(location: 1, length: 1))
+  case .burned:
+    string = NSMutableAttributedString(string: "•", attributes: [.foregroundColor: kDotColorBurned])
+  default:
+    string = nil
+  }
+  return string
+}
+
+private class AnimationContext {
+  let cheats: Bool
+  let subjectDetailsViewShown: Bool
+
+  private var fadingLabels = [(UILabel, UILabel)]()
+
+  init(cheats: Bool, subjectDetailsViewShown: Bool) {
+    self.cheats = cheats
+    self.subjectDetailsViewShown = subjectDetailsViewShown
+  }
+
+  func addFadingLabel(original: UILabel) {
+    let copy = copyLabel(original)
+    original.alpha = 0.0
+    fadingLabels.append((original, copy))
+  }
+
+  func animateFadingLabels() {
+    for (original, copy) in fadingLabels {
+      original.alpha = 1.0
+      switch original.textAlignment {
+      case NSTextAlignment.natural:
+        fallthrough
+      case NSTextAlignment.left:
+        copy.center = CGPoint(x: original.frame.minX + copy.frame.size.width / 2,
+                              y: original.frame.minY + copy.frame.size.height / 2)
+      default:
+        copy.center = original.center
+        copy.bounds = original.bounds
+      }
+      copy.transform = original.transform
+      copy.alpha = 0.0
+    }
+  }
+
+  deinit {
+    for (_, copy) in fadingLabels {
+      copy.removeFromSuperview()
+    }
+  }
+}
+
+@objc
+protocol ReviewViewControllerDelegate: AnyObject {
+  func allowsCheats(forReviewItem item: ReviewItem) -> Bool
+  func allowsCustomFonts() -> Bool
+  func showsSuccessRate() -> Bool
+  func finishedAllReviewItems(_ reviewViewController: ReviewViewController)
+
+  @objc optional func tappedMenuButton(reviewViewController: ReviewViewController,
+                                       menuButton: UIButton)
+}
+
+class ReviewViewController: UIViewController, UITextFieldDelegate, SubjectDelegate {
+  private var kanaInput: TKMKanaInput!
+  private let hapticGenerator = UIImpactFeedbackGenerator(style: UIImpactFeedbackGenerator
+    .FeedbackStyle.light)
+  private let tickImage = Asset.checkmarkCircle.image
+  private let forwardArrowImage = Asset.icArrowForwardWhite.image
+  private let skipImage = Asset.goforwardPlus.image
+
+  private var services: TKMServices!
+  private var showMenuButton: Bool!
+  private var showSubjectHistory: Bool!
+  private weak var delegate: ReviewViewControllerDelegate!
+
+  var session: ReviewSession!
+
+  private var lastMarkAnswerWasFirstTime = false
+  private var ankiModeCachedSubmit = false
+  private var isAnimatingSubjectDetailsView = false
+  private var showingOverrideCorrectButton = false
+
+  private var previousSubjectGradient: CAGradientLayer!
+
+  private var previousSubject: TKMSubject?
+  private var previousSubjectLabel: UILabel?
+
+  private var isPracticeSession = false
+
+  // These are set to match the keyboard animation.
+  private var animationDuration: Double = kDefaultAnimationDuration
+  private var animationCurve: UIView.AnimationCurve = kDefaultAnimationCurve
+  private var previousKeyboardInsetHeight: CGFloat?
+
+  private var currentFontName: String!
+  private var availableFonts: [String]?
+  private var defaultFontSize: Double!
+  private let overrideCorrectButton = UIButton(type: .system)
+
+  @IBOutlet private var menuButton: UIButton!
+  @IBOutlet private var questionBackground: GradientView!
+  @IBOutlet private var promptBackground: GradientView!
+  @IBOutlet private var questionLabel: UILabel!
+  @IBOutlet private var promptLabel: UILabel!
+  @IBOutlet private var answerField: AnswerTextField!
+  @IBOutlet private var submitButton: UIButton!
+  @IBOutlet private var addSynonymButton: UIButton!
+  @IBOutlet private var revealAnswerButton: UIButton!
+  @IBOutlet private var progressBar: UIProgressView!
+  @IBOutlet private var subjectDetailsView: SubjectDetailsView!
+  @IBOutlet private var previousSubjectButton: UIButton!
+
+  @IBOutlet private var wrapUpLabel: UILabel!
+  @IBOutlet private var successRateLabel: UILabel!
+  @IBOutlet private var doneLabel: UILabel!
+  @IBOutlet private var queueLabel: UILabel!
+  @IBOutlet private var wrapUpIcon: UIImageView!
+  @IBOutlet private var successRateIcon: UIImageView!
+  @IBOutlet private var doneIcon: UIImageView!
+  @IBOutlet private var queueIcon: UIImageView!
+  @IBOutlet private var levelLabel: UILabel!
+
+  @IBOutlet private var answerFieldToBottomConstraint: NSLayoutConstraint!
+  @IBOutlet private var answerFieldToSubjectDetailsViewConstraint: NSLayoutConstraint!
+  @IBOutlet private var previousSubjectButtonWidthConstraint: NSLayoutConstraint!
+  @IBOutlet private var previousSubjectButtonHeightConstraint: NSLayoutConstraint!
+  @IBOutlet private var questionLabelBottomConstraint: NSLayoutConstraint!
+
+  @IBOutlet private var successRateIconWidthConstraint: NSLayoutConstraint!
+  @IBOutlet private var doneIconWidthConstraint: NSLayoutConstraint!
+  @IBOutlet private var queueIconWidthConstraint: NSLayoutConstraint!
+  @IBOutlet private var wrapUpIconWidthConstraint: NSLayoutConstraint!
+  @IBOutlet private var promptLabelHeightConstraint: NSLayoutConstraint!
+  @IBOutlet private var answerFieldHeightConstraint: NSLayoutConstraint!
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    kanaInput = TKMKanaInput(delegate: self)
+  }
+
+  public func setup(services: TKMServices,
+                    items: [ReviewItem],
+                    showMenuButton: Bool,
+                    showSubjectHistory: Bool,
+                    delegate: ReviewViewControllerDelegate,
+                    isPracticeSession: Bool = false) {
+    self.services = services
+    self.showMenuButton = showMenuButton
+    self.showSubjectHistory = showSubjectHistory
+    self.delegate = delegate
+    self.isPracticeSession = isPracticeSession
+
+    session = ReviewSession(services: services, items: items,
+                            isPracticeSession: isPracticeSession)
+  }
+
+  public var activeQueueLength: Int {
+    session.activeQueueLength
+  }
+
+  public var tasksAnsweredCorrectly: Int {
+    session.tasksAnsweredCorrectly
+  }
+
+  // MARK: - UIViewController
+
+  private let nd = NotificationDispatcher()
+  private let sessionProgressLabel = UILabel()
+  private var compactQuestionTop: NSLayoutConstraint?
+  private var compactQuestionHeight: NSLayoutConstraint?
+  private var compactShowingDetails = false
+
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+
+    TKMStyle.addShadowToView(questionLabel, offset: 1, opacity: 0.2, radius: 4)
+    TKMStyle.addShadowToView(previousSubjectButton, offset: 0, opacity: 0.7, radius: 4)
+
+    wrapUpIcon.image = Asset.baselineAccessTimeBlack24pt.image
+      .withRenderingMode(UIImage.RenderingMode.alwaysTemplate)
+
+    previousSubjectGradient = CAGradientLayer()
+    previousSubjectGradient.cornerRadius = 4.0
+    previousSubjectButton.layer.addSublayer(previousSubjectGradient)
+
+    nd.add(name: UIResponder.keyboardWillShowNotification) { [weak self] notification in
+      self?.keyboardWillShow(notification)
+    }
+    nd.add(name: UIResponder.keyboardWillHideNotification) { [weak self] _ in
+      self?.keyboardWillHide()
+    }
+
+    subjectDetailsView.setup(services: services, delegate: self)
+
+    answerField.autocapitalizationType = .none
+    answerField.delegate = kanaInput
+    answerField.addAction(for: .editingChanged) { [weak self] in self?.answerFieldValueDidChange() }
+    answerField.layer.borderWidth = 3.0
+    answerField.layer.masksToBounds = true
+
+    configureOverrideCorrectButton()
+
+    let showSuccessRate = delegate.showsSuccessRate()
+    successRateIcon.isHidden = !showSuccessRate
+    successRateLabel.isHidden = !showSuccessRate
+
+    if !showMenuButton {
+      menuButton.isHidden = true
+    }
+
+    currentFontName = TKMStyle.japaneseFontName
+    defaultFontSize = Double(questionLabel.font.pointSize)
+
+    questionLabel.isUserInteractionEnabled = false
+
+    let shortPressRecognizer =
+      UITapGestureRecognizer(target: self, action: #selector(didShortPressQuestionLabel))
+    questionBackground.addGestureRecognizer(shortPressRecognizer)
+
+    let leftSwipeRecognizer = UISwipeGestureRecognizer(target: self,
+                                                       action: #selector(didSwipeQuestionLabel))
+    leftSwipeRecognizer.direction = .left
+    questionBackground.addGestureRecognizer(leftSwipeRecognizer)
+    let rightSwipeRecognizer = UISwipeGestureRecognizer(target: self,
+                                                        action: #selector(didSwipeQuestionLabel))
+    rightSwipeRecognizer.direction = .right
+    questionBackground.addGestureRecognizer(rightSwipeRecognizer)
+
+    leftSwipeRecognizer.require(toFail: shortPressRecognizer)
+    rightSwipeRecognizer.require(toFail: shortPressRecognizer)
+
+    configureCalmReviewLayout()
+    resizeViewsForFontSize()
+    viewDidLayoutSubviews()
+  }
+
+  override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    // Redraw the background gradients if dark/light mode changed.
+    if let previousTraitCollection = previousTraitCollection {
+      if session?.activeTask != nil,
+         previousTraitCollection.userInterfaceStyle != traitCollection.userInterfaceStyle {
+        questionBackground
+          .colors = TKMStyle.gradient(forAssignment: session.activeAssignment)
+        promptBackground.colors = session.activeTaskType == .meaning ? TKMStyle
+          .meaningGradient : TKMStyle.readingGradient
+        if let taskType = session.activeTaskType {
+          applyAnswerFieldAppearance(taskType: taskType,
+                                     placeholder: answerField.attributedPlaceholder?.string ??
+                                       answerField.placeholder ?? "")
+        }
+      }
+      if previousTraitCollection.preferredContentSizeCategory != traitCollection
+        .preferredContentSizeCategory {
+        resizeViewsForFontSize()
+      }
+    }
+  }
+
+  func resizeViewsForFontSize() {
+    // Scale the icons based on the system font size.
+    let iconSize = UIFontMetrics(forTextStyle: .caption1).scaledValue(for: 16.0)
+    successRateIconWidthConstraint.constant = iconSize
+    doneIconWidthConstraint.constant = iconSize
+    queueIconWidthConstraint.constant = iconSize
+    wrapUpIconWidthConstraint.constant = iconSize
+
+    // Scale the prompt and answer field heights.
+    promptLabelHeightConstraint.constant = UIFontMetrics(forTextStyle: .subheadline)
+      .scaledValue(for: 40.0)
+    answerFieldHeightConstraint.constant =
+      UIFontMetrics(forTextStyle: .title2).scaledValue(for: 64.0)
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    #if targetEnvironment(macCatalyst)
+    let showingDetails = compactShowingDetails
+    compactQuestionTop?.constant = showingDetails ? 80 : max(80, (view.bounds.height - 360) / 2)
+    compactQuestionHeight?.constant = min(220, max(100, view.bounds.height * 0.28))
+    #endif
+
+    // Fix the extra inset at the top of the subject details view. This isn't necessary after iOS
+    // 15.
+    if #available(iOS 15.0, *) {} else {
+      subjectDetailsView
+        .contentInset = UIEdgeInsets(top: -view.safeAreaInsets.top, left: 0, bottom: 0,
+                                     right: 0)
+    }
+  }
+
+  override func viewWillAppear(_ animated: Bool) {
+    if !session.hasStarted {
+      // This must be done for the first time after the view has been added
+      // to the window, since the window may override the userInterfaceStyle.
+      randomTask()
+    }
+
+    super.viewWillAppear(animated)
+    SiriShortcutHelper.shared
+      .attachShortcutActivity(self, type: .reviews)
+    navigationController?.setNavigationBarHidden(true, animated: false)
+    if subjectDetailsView.isHidden {
+      answerField.becomeFirstResponder()
+      answerField.reloadInputViews()
+    } else {
+      subjectDetailsView.becomeFirstResponder()
+    }
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    subjectDetailsView.deselectLastSubjectChipTapped()
+    if subjectDetailsView.isHidden {
+      DispatchQueue.main.async {
+        self.focusAnswerField()
+      }
+    }
+  }
+
+  @objc public func focusAnswerField() {
+    answerField.becomeFirstResponder()
+  }
+
+  override var preferredStatusBarStyle: UIStatusBarStyle {
+    UIStatusBarStyle.lightContent
+  }
+
+  // MARK: - Event handlers
+
+  @objc private func keyboardWillShow(_ notification: Notification) {
+    guard let keyboardFrame = notification
+      .userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+      let animationDuration = notification
+      .userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double,
+      let animationCurve = notification
+      .userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int
+    else {
+      return
+    }
+    self.animationDuration = animationDuration
+    self.animationCurve = UIView.AnimationCurve(rawValue: animationCurve)!
+
+    resizeKeyboard(toHeight: Double(keyboardFrame.size.height))
+  }
+
+  private func keyboardWillHide() {
+    subjectDetailsView.contentInset = .zero
+  }
+
+  private func resizeKeyboard(toHeight height: Double) {
+    // When the review view is embedded in a lesson view controller, the review view doesn't extend
+    // all the way to the bottom - the page selector view is below it.  Take this into account:
+    // find out how far the bottom of our UIView is from the bottom of the window, and subtract that
+    // distance from the constraint height.
+    guard let window = view.window else {
+      return
+    }
+    let viewBottomLeft = view.convert(CGPoint(x: 0.0, y: view.bounds.maxY),
+                                      to: window)
+    let windowBottom = window.bounds.maxY
+    let distanceFromViewBottomToWindowBottom = windowBottom - viewBottomLeft.y
+    let insetHeight = max(0, CGFloat(height) - distanceFromViewBottomToWindowBottom)
+
+    answerFieldToBottomConstraint.constant = insetHeight
+
+    // When the keyboard changes size by a small amount (the autocorrect bar is shown/hidden) try
+    // to avoid moving the question label by offsetting its bottom constraint by the same amount the
+    // keyboard moved.
+    if let previousKeyboardInsetHeight = previousKeyboardInsetHeight,
+       abs(insetHeight - previousKeyboardInsetHeight) <= kSmallKeyboardHeightChange {
+      questionLabelBottomConstraint.constant = previousKeyboardInsetHeight - insetHeight
+    } else {
+      questionLabelBottomConstraint.constant = 0
+      previousKeyboardInsetHeight = insetHeight
+    }
+
+    var subjectDetailsViewInset = subjectDetailsView.contentInset
+    subjectDetailsViewInset.bottom = insetHeight
+    subjectDetailsView.contentInset = subjectDetailsViewInset
+
+    UIView.beginAnimations(nil, context: nil)
+    UIView.setAnimationDuration(animationDuration)
+    UIView.setAnimationCurve(animationCurve)
+    UIView.setAnimationBeginsFromCurrentState(true)
+
+    view.layoutIfNeeded()
+
+    UIView.commitAnimations()
+  }
+
+  override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
+    switch StoryboardSegue.Review(segue) {
+    case .reviewSummary:
+      let vc = segue.destination as! ReviewSummaryViewController
+      vc.setup(services: services, items: session.completedReviews, isPractice: isPracticeSession)
+    case .subjectDetails:
+      let vc = segue.destination as! SubjectDetailsViewController
+      vc.setup(services: services, subject: sender as! TKMSubject)
+    default:
+      break
+    }
+  }
+
+  @objc public func endReviewSession() {
+    perform(segue: StoryboardSegue.Review.reviewSummary, sender: self)
+  }
+
+  private func configureCalmReviewLayout() {
+    guard showMenuButton else { return }
+    let pause = UIButton(type: .system)
+    var config = UIButton.Configuration.tinted()
+    config.title = "Pause"
+    config.image = UIImage(systemName: "pause.fill")
+    config.imagePadding = 8
+    config.baseForegroundColor = StudyPanel.accent
+    config.baseBackgroundColor = StudyPanel.accent
+    config.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+    pause.configuration = config
+    pause.translatesAutoresizingMaskIntoConstraints = false
+    pause.addAction(UIAction { [weak self, weak pause] _ in
+      guard let self, let pause,
+            let container = self.delegate as? ReviewContainerViewController else { return }
+      container.endReviewSession(button: pause)
+    }, for: .touchUpInside)
+    view.addSubview(pause)
+    NSLayoutConstraint.activate([
+      pause.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+      pause.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
+    ])
+    #if targetEnvironment(macCatalyst)
+    for item in [successRateLabel, doneLabel, queueLabel, successRateIcon, doneIcon, queueIcon] {
+      item?.isHidden = true
+    }
+    sessionProgressLabel.font = .preferredFont(forTextStyle: .headline)
+    sessionProgressLabel.textColor = .secondaryLabel
+    sessionProgressLabel.textAlignment = .center
+    sessionProgressLabel.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(sessionProgressLabel)
+    NSLayoutConstraint.activate([
+      sessionProgressLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      sessionProgressLabel.centerYAnchor.constraint(equalTo: pause.centerYAnchor),
+      sessionProgressLabel.trailingAnchor.constraint(lessThanOrEqualTo: pause.leadingAnchor, constant: -12),
+    ])
+    menuButton.tintColor = StudyPanel.accent
+    menuButton.accessibilityLabel = "Review settings"
+    questionLabel.layer.shadowOpacity = 0
+    answerField.layer.cornerRadius = 16
+    answerField.layer.borderWidth = 1.5
+    submitButton.tintColor = StudyPanel.accent
+    progressBar.progressTintColor = StudyPanel.accent
+    progressBar.trackTintColor = UIColor.secondaryLabel.withAlphaComponent(0.12)
+    view.backgroundColor = .systemGroupedBackground
+
+    // Retain the established answer/detail transitions while constraining the reading column.
+    let centered: [UIView] = [questionLabel, promptLabel, answerField, subjectDetailsView]
+    let replace = view.constraints.filter { c in
+      let first = c.firstItem as? UIView
+      let second = c.secondItem as? UIView
+      let horizontal = c.firstAttribute == .leading || c.firstAttribute == .trailing
+      return (horizontal && ((first === view && centered.contains { $0 === second }) ||
+        (second === view && centered.contains { $0 === first }))) ||
+        (first === questionLabel && c.firstAttribute == .top) ||
+        (first === view && second === submitButton && c.firstAttribute == .trailing) ||
+        (first === addSynonymButton && second === view && c.firstAttribute == .leading) ||
+        (first === previousSubjectButton && c.firstAttribute == .leading)
+    }
+    NSLayoutConstraint.deactivate(replace)
+    answerFieldToBottomConstraint.isActive = false
+    for item in centered {
+      let width = item.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor, constant: -48)
+      width.priority = .defaultHigh
+      NSLayoutConstraint.activate([
+        item.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        item.widthAnchor.constraint(lessThanOrEqualToConstant: 680), width,
+      ])
+    }
+    submitButton.trailingAnchor.constraint(equalTo: answerField.trailingAnchor, constant: -4).isActive = true
+    addSynonymButton.leadingAnchor.constraint(equalTo: answerField.leadingAnchor, constant: 4).isActive = true
+    previousSubjectButton.leadingAnchor.constraint(equalTo: answerField.leadingAnchor, constant: 4).isActive = true
+    compactQuestionTop = questionLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 80)
+    compactQuestionHeight = questionLabel.heightAnchor.constraint(equalToConstant: 220)
+    compactQuestionTop?.isActive = true
+    compactQuestionHeight?.isActive = true
+    #endif
+  }
+
+  private func configureOverrideCorrectButton() {
+    overrideCorrectButton.translatesAutoresizingMaskIntoConstraints = false
+    overrideCorrectButton.isHidden = true
+    overrideCorrectButton.alpha = 0.0
+    overrideCorrectButton.setTitle(kOverrideAnswerButtonTitle, for: .normal)
+    overrideCorrectButton.titleLabel?.font = UIFont.preferredFont(forTextStyle: .headline)
+    overrideCorrectButton.titleLabel?.adjustsFontSizeToFitWidth = true
+    overrideCorrectButton.titleLabel?.minimumScaleFactor = 0.8
+    overrideCorrectButton.addTarget(self, action: #selector(markCorrect), for: .touchUpInside)
+
+    if #available(iOS 15.0, *) {
+      var configuration = UIButton.Configuration.filled()
+      configuration.baseBackgroundColor = StudyPanel.accent
+      configuration.baseForegroundColor = .systemBackground
+      configuration.cornerStyle = .medium
+      configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 18,
+                                                            bottom: 12, trailing: 18)
+      configuration.title = kOverrideAnswerButtonTitle
+      overrideCorrectButton.configuration = configuration
+    } else {
+      overrideCorrectButton.backgroundColor = TKMStyle.defaultTintColor
+      overrideCorrectButton.setTitleColor(.white, for: .normal)
+      overrideCorrectButton.contentEdgeInsets = UIEdgeInsets(top: 12, left: 18,
+                                                             bottom: 12, right: 18)
+      overrideCorrectButton.layer.cornerRadius = 8.0
+    }
+
+    view.addSubview(overrideCorrectButton)
+    NSLayoutConstraint.activate([
+      overrideCorrectButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      overrideCorrectButton.bottomAnchor.constraint(equalTo: promptBackground.topAnchor,
+                                                    constant: -12),
+      overrideCorrectButton.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide
+        .leadingAnchor, constant: 16),
+      overrideCorrectButton.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide
+        .trailingAnchor, constant: -16),
+    ])
+  }
+
+  private func taskAccentColor(_ taskType: TaskType) -> UIColor {
+    if session.activeAssignment.subjectType == .radical {
+      return .systemBlue
+    }
+    switch taskType {
+    case .meaning:
+      return .systemPink
+    case .reading:
+      return .systemPurple
+    }
+  }
+
+  private func applyAnswerFieldAppearance(taskType: TaskType, placeholder: String) {
+    let borderColor: UIColor
+    switch taskType {
+    case .meaning:
+      borderColor = TKMStyle.Color.grey33
+    case .reading:
+      borderColor = TKMStyle.vocabularyColor1
+    }
+
+    let backgroundAlpha: CGFloat = traitCollection.userInterfaceStyle == .dark ? 0.22 : 0.12
+    answerField.backgroundColor = borderColor.withAlphaComponent(backgroundAlpha)
+    answerField.layer.borderColor = borderColor.cgColor
+    answerField.tintColor = borderColor
+    answerField.attributedPlaceholder = NSAttributedString(string: placeholder,
+                                                           attributes: [
+                                                             .foregroundColor: borderColor
+                                                               .withAlphaComponent(0.9),
+                                                           ])
+    answerField.accessibilityHint = placeholder
+    #if targetEnvironment(macCatalyst)
+    answerField.backgroundColor = .secondarySystemGroupedBackground
+    answerField.layer.borderColor = taskAccentColor(taskType).cgColor
+    answerField.tintColor = StudyPanel.accent
+    answerField.attributedPlaceholder = NSAttributedString(string: placeholder,
+      attributes: [.foregroundColor: UIColor.secondaryLabel])
+    questionBackground.colors = [UIColor.systemGroupedBackground.cgColor, UIColor.systemGroupedBackground.cgColor]
+    promptBackground.colors = [UIColor.systemGroupedBackground.cgColor, UIColor.systemGroupedBackground.cgColor]
+    questionLabel.textColor = .label
+    promptLabel.textColor = taskAccentColor(taskType)
+    #endif
+  }
+
+  private func setOverrideCorrectButtonVisible(_ visible: Bool, animated: Bool) {
+    let updates = {
+      self.overrideCorrectButton.alpha = visible ? 1.0 : 0.0
+    }
+
+    if visible {
+      overrideCorrectButton.isHidden = false
+    }
+
+    if animated {
+      UIView.animate(withDuration: animationDuration, animations: updates) { _ in
+        if !visible {
+          self.overrideCorrectButton.isHidden = true
+        }
+      }
+    } else {
+      updates()
+      overrideCorrectButton.isHidden = !visible
+    }
+  }
+
+  // MARK: - Setup
+
+  private func randomTask() {
+    if session.activeQueueLength == 0 {
+      delegate.finishedAllReviewItems(self)
+      return
+    }
+
+    // Choose a random task from the active queue.
+    session.nextTask()
+
+    updateViewForCurrentTask()
+  }
+
+  private func updateViewForCurrentTask(updateFirstResponder: Bool = true) {
+    TKMStyle.withTraitCollection(traitCollection) {
+      self.setOverrideCorrectButtonVisible(false, animated: false)
+      self.showingOverrideCorrectButton = false
+
+      // Update the progress labels.
+      let queueLength = Int(session.activeQueueLength + session.reviewQueueLength)
+      let doneText = String(session.reviewsCompleted)
+      let queueText = String(queueLength)
+      let wrapUpText = String(session.activeQueueLength)
+
+      // Update the progress bar.
+      let totalLength = queueLength + session.reviewsCompleted
+      sessionProgressLabel.text = "\(session.reviewsCompleted) of \(totalLength) completed"
+      if totalLength == 0 {
+        progressBar.setProgress(0.0, animated: true)
+      } else {
+        progressBar.setProgress(Float(session.reviewsCompleted) / Float(totalLength),
+                                animated: true)
+      }
+
+      // Fill the question labels.
+      var subjectTypePrompt: String
+      var taskTypePrompt: String
+      var promptGradient: [CGColor]
+      var promptTextColor: UIColor
+
+      switch session.activeAssignment.subjectType {
+      case .kanji:
+        subjectTypePrompt = "Kanji"
+      case .radical:
+        subjectTypePrompt = "Radical"
+      case .vocabulary:
+        subjectTypePrompt = "Vocabulary"
+      default:
+        fatalError()
+      }
+      if let firstReading = session.activeSubject.primaryReadings.first {
+        kanaInput.alphabet = (firstReading.hasType && firstReading.type == .onyomi &&
+          Settings.useKatakanaForOnyomi) ? .katakana : .hiragana
+      } else {
+        kanaInput.alphabet = .hiragana
+      }
+      switch session.activeTaskType! {
+      case .meaning:
+        kanaInput.enabled = false
+        taskTypePrompt = session.activeAssignment.subjectType == .radical ? "Name" : "Meaning"
+        promptGradient = TKMStyle.meaningGradient
+        promptTextColor = kMeaningTextColor
+      case .reading:
+        kanaInput.enabled = true
+        taskTypePrompt = "Reading"
+        promptGradient = TKMStyle.readingGradient
+        promptTextColor = kReadingTextColor
+      }
+
+      if session.activeAssignment.subjectType != .radical,
+         Settings.ankiMode,
+         Settings.ankiModeCombineReadingMeaning {
+        taskTypePrompt = Settings.meaningFirst ? "Meaning + Reading" : "Reading + Meaning"
+      }
+
+      // Choose a random font.
+      currentFontName = randomFont(thatCanRenderText: session.activeSubject.japanese)
+
+      #if targetEnvironment(macCatalyst)
+      let prompt = NSMutableAttributedString(
+        string: session.activeTaskType == .meaning && session.activeAssignment.subjectType == .radical
+          ? "Radical Name" : taskTypePrompt,
+        attributes: [.font: UIFont.systemFont(ofSize: 20, weight: .semibold)])
+      #else
+      let boldFont = UIFont.boldSystemFont(ofSize: promptLabel!.font.pointSize)
+      let prompt =
+        NSMutableAttributedString(string: "\(subjectTypePrompt) \(taskTypePrompt)")
+      prompt.setAttributes([NSAttributedString.Key.font: boldFont],
+                           range: NSRange(location: prompt.length - taskTypePrompt.count,
+                                          length: taskTypePrompt.count))
+      #endif
+
+      // Text color.
+      promptLabel!.textColor = promptTextColor
+
+      // Submit button.
+      if Settings.allowSkippingReviews {
+        // Change the skip button icon.
+        submitButton.setImage(skipImage, for: .normal)
+      } else if !Settings.ankiMode {
+        submitButton.isEnabled = false
+      } else {
+        // Hide the submit button in Anki mode if skipping reviews are off
+        submitButton.isHidden = true
+      }
+
+      // Mac uses a stable neutral background; task colors belong to the prompt and outline.
+      #if !targetEnvironment(macCatalyst)
+      questionBackground
+        .animateColors(to: TKMStyle.gradient(forAssignment: session.activeAssignment),
+                       duration: animationDuration)
+      promptBackground.animateColors(to: promptGradient, duration: animationDuration)
+      #endif
+
+      // Accessibility.
+      successRateLabel.accessibilityLabel = session.successRateText + " correct so far"
+      doneLabel.accessibilityLabel = doneText + " done"
+      queueLabel.accessibilityLabel = queueText + " remaining"
+      questionLabel.accessibilityLabel = "Japanese " + subjectTypePrompt + ". Question"
+      levelLabel.accessibilityLabel = "srs level \(session.activeAssignment.srsStage)"
+
+      answerField.text = nil
+      answerField.textColor = TKMStyle.Color.label
+      applyAnswerFieldAppearance(taskType: session.activeTaskType,
+                                 placeholder: "Your Response")
+
+      answerField.useJapaneseKeyboard = Settings
+        .autoSwitchKeyboard && session.activeTaskType == .reading
+
+      if Settings.playAudioAutomatically, session.activeTaskType == .reading,
+         let subject = session.activeSubject,
+         subject.hasVocabulary, !subject.vocabulary.audio.isEmpty {
+        services.audio.preload(subjectID: subject.id)
+      }
+
+      if Settings.showSRSLevelIndicator {
+        levelLabel.attributedText = getDots(stage: session.activeAssignment.srsStage)
+      } else {
+        levelLabel.attributedText = nil
+      }
+
+      let setupContextFunc = {
+        (ctx: AnimationContext) in
+        if !(self.questionLabel.attributedText?
+          .isEqual(to: self.session.activeSubject.japaneseText) ?? false) ||
+          self.questionLabel.font.fontName != self.currentFontName ||
+          self.questionLabel.font.pointSize != self.questionLabelFontSize() {
+          ctx.addFadingLabel(original: self.questionLabel!)
+          self.questionLabel
+            .font = UIFont(name: self.currentFontName, size: self.questionLabelFontSize())
+          self.questionLabel.attributedText = self.session.activeSubject.japaneseText
+        }
+        if self.wrapUpLabel.text != wrapUpText {
+          ctx.addFadingLabel(original: self.wrapUpLabel!)
+          self.wrapUpLabel.text = wrapUpText
+        }
+        if self.successRateLabel.text != self.session.successRateText {
+          ctx.addFadingLabel(original: self.successRateLabel!)
+          self.successRateLabel.text = self.session.successRateText
+        }
+        if self.doneLabel.text != doneText {
+          ctx.addFadingLabel(original: self.doneLabel!)
+          self.doneLabel.text = doneText
+        }
+        if self.queueLabel.text != queueText {
+          ctx.addFadingLabel(original: self.queueLabel!)
+          self.queueLabel.text = queueText
+        }
+        if self.promptLabel.attributedText?.string != prompt.string {
+          ctx.addFadingLabel(original: self.promptLabel!)
+          self.promptLabel.attributedText = prompt
+        }
+      }
+      animateSubjectDetailsView(shown: false, setupContextFunc: setupContextFunc,
+                                updateFirstResponder: updateFirstResponder)
+    }
+  }
+
+  // MARK: - Random fonts
+
+  func fontsThatCanRenderText(_ text: String, exclude: [String]?) -> [String] {
+    var availableFonts: [String] = []
+
+    for filename in Settings.selectedFonts {
+      if let font = services.fontLoader.font(fileName: filename) {
+        if let ex = exclude, ex.contains(font.fontName) {
+          continue
+        }
+        if font.canRender(text) {
+          availableFonts.append(font.fontName)
+        }
+      }
+    }
+
+    return availableFonts
+  }
+
+  func nextCustomFont(thatCanRenderText _: String) -> String? {
+    if let availableFonts = availableFonts,
+       let index = availableFonts.firstIndex(of: currentFontName) {
+      if index + 1 >= availableFonts.count {
+        return availableFonts.first
+      } else {
+        return availableFonts[index + 1]
+      }
+    }
+    return nil
+  }
+
+  func previousCustomFont(thatCanRenderText _: String) -> String? {
+    if let availableFonts = availableFonts,
+       let index = availableFonts.firstIndex(of: currentFontName) {
+      if index == 0 {
+        return availableFonts.last
+      } else {
+        return availableFonts[index - 1]
+      }
+    }
+    return nil
+  }
+
+  func randomFont(thatCanRenderText text: String) -> String {
+    if delegate.allowsCustomFonts() {
+      // Re-set the supported fonts when we pick a random one as that is the first
+      // step.
+      availableFonts = fontsThatCanRenderText(text, exclude: nil).sorted()
+      return availableFonts?.randomElement() ?? TKMStyle.japaneseFontName
+    } else {
+      return TKMStyle.japaneseFontName
+    }
+  }
+
+  // MARK: - Animation
+
+  private func animateSubjectDetailsView(shown: Bool,
+                                         setupContextFunc: ((AnimationContext) -> Void)?,
+                                         updateFirstResponder: Bool) {
+    let cheats = delegate.allowsCheats(forReviewItem: session.activeTask)
+    compactShowingDetails = shown
+
+    if shown {
+      subjectDetailsView.isHidden = false
+      if showingOverrideCorrectButton {
+        overrideCorrectButton.isHidden = false
+      }
+      if cheats, !Settings.ankiMode {
+        addSynonymButton.isHidden = false
+      }
+      if Settings.ankiMode, Settings.allowSkippingReviews {
+        submitButton.isHidden = true
+      }
+    } else {
+      if previousSubject != nil {
+        previousSubjectLabel?.isHidden = false
+        previousSubjectButton.isHidden = false
+      }
+      if Settings.ankiMode, Settings.allowSkippingReviews {
+        submitButton.isHidden = false
+      }
+    }
+
+    // Change the submit button icon.
+    let submitButtonImage = shown ? forwardArrowImage :
+      (Settings.allowSkippingReviews ? skipImage : tickImage)
+    submitButton.setImage(submitButtonImage, for: .normal)
+
+    // We have to do the UIView animation this way (rather than using the block syntax) so we can
+    // set
+    // UIViewAnimationCurve.  Create a context to pass to the stop selector.
+    let context = AnimationContext(cheats: cheats, subjectDetailsViewShown: shown)
+    if let setupContextFunc = setupContextFunc {
+      setupContextFunc(context)
+    }
+
+    isAnimatingSubjectDetailsView = true
+
+    UIView.beginAnimations(nil, context: Unmanaged.passRetained(context).toOpaque())
+    UIView.setAnimationDelegate(self)
+    UIView.setAnimationDidStop(#selector(animationDidStop(animationID:finished:context:)))
+    UIView.setAnimationDuration(animationDuration)
+    UIView.setAnimationCurve(animationCurve)
+    UIView.setAnimationBeginsFromCurrentState(false)
+
+    // Constraints.
+    #if targetEnvironment(macCatalyst)
+    answerFieldToBottomConstraint.isActive = compactQuestionTop == nil ? !shown : false
+    compactQuestionTop?.constant = shown ? 80 : max(80, (view.bounds.height - 360) / 2)
+    #else
+    answerFieldToBottomConstraint.isActive = !shown
+    #endif
+    if shown {
+      questionLabelBottomConstraint.constant = 0
+    }
+
+    // Enable/disable the answer field, and set its first responder status.
+    // This makes the keyboard appear or disappear immediately.  We need this animation to happen
+    // here so it's in sync with the others.
+    answerField.isEnabled = !shown && !Settings.ankiMode
+    if updateFirstResponder {
+      if !shown {
+        answerField.becomeFirstResponder()
+      } else {
+        answerField.resignFirstResponder()
+      }
+    }
+
+    // Scale the text in the question label.
+    let scale = shown ? 0.7 : 1.0
+    questionLabel.transform = CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale))
+
+    view.layoutIfNeeded()
+
+    context.animateFadingLabels()
+
+    // Fade the controls.
+    subjectDetailsView.alpha = shown ? 1.0 : 0.0
+    if cheats {
+      addSynonymButton.alpha = shown ? 1.0 : 0.0
+    }
+    revealAnswerButton.alpha = 0.0
+    overrideCorrectButton.alpha = shown && showingOverrideCorrectButton ? 1.0 : 0.0
+    previousSubjectLabel?.alpha = shown ? 0.0 : 1.0
+    previousSubjectButton.alpha = shown ? 0.0 : 1.0
+
+    // Change the foreground color of the answer field.
+    answerField.textColor = shown ? .systemRed : TKMStyle.Color.label
+
+    // Scroll to the top.
+    subjectDetailsView
+      .setContentOffset(CGPoint(x: 0, y: -subjectDetailsView.contentInset.top), animated: false)
+
+    UIView.commitAnimations()
+  }
+
+  @objc func animationDidStop(animationID _: NSString,
+                              finished _: NSNumber,
+                              context: UnsafeMutableRawPointer) {
+    let ctx = Unmanaged<AnimationContext>.fromOpaque(context).takeRetainedValue()
+
+    isAnimatingSubjectDetailsView = false
+
+    revealAnswerButton.isHidden = true
+    overrideCorrectButton.isHidden = !(ctx.subjectDetailsViewShown && showingOverrideCorrectButton)
+    if ctx.subjectDetailsViewShown {
+      previousSubjectLabel?.isHidden = true
+      previousSubjectButton.isHidden = true
+    } else {
+      subjectDetailsView.isHidden = true
+      if ctx.cheats {
+        addSynonymButton.isHidden = true
+      }
+    }
+
+    // This makes sure taps are still processed and not ignored, even when the closing animation
+    // after a button press was not completed
+    if Settings.ankiMode, ankiModeCachedSubmit { submit() }
+  }
+
+  // MARK: - Previous subject button
+
+  func animateLabelToPreviousSubjectButton(_ label: UILabel) {
+    guard let previousSubject = previousSubject else {
+      return
+    }
+
+    let oldLabelCenter = label.center
+    let labelBounds = CGRect(origin: CGPoint.zero, size: label.sizeThatFits(CGSize.zero))
+    label.bounds = labelBounds
+    label.center = oldLabelCenter
+
+    let newButtonWidth =
+      kPreviousSubjectButtonPadding * 2 + labelBounds.size.width * kPreviousSubjectScale
+    let newButtonHeight =
+      kPreviousSubjectButtonPadding * 2 + labelBounds.size.height * kPreviousSubjectScale
+
+    var newGradient: [CGColor]!
+    TKMStyle.withTraitCollection(traitCollection) {
+      newGradient = TKMStyle.gradient(forSubject: previousSubject)
+    }
+
+    view.layoutIfNeeded()
+    UIView.animate(withDuration: kPreviousSubjectAnimationDuration,
+                   delay: 0.0,
+                   options: .curveEaseOut,
+                   animations: {
+                     label
+                       .transform = CGAffineTransform(scaleX: kPreviousSubjectScale,
+                                                      y: kPreviousSubjectScale)
+
+                     label.translatesAutoresizingMaskIntoConstraints = false
+                     let centerYConstraint =
+                       NSLayoutConstraint(item: label,
+                                          attribute: .centerY,
+                                          relatedBy: .equal,
+                                          toItem: self.previousSubjectButton,
+                                          attribute: .centerY,
+                                          multiplier: 1.0,
+                                          constant: 0)
+                     let centerXConstraint =
+                       NSLayoutConstraint(item: label,
+                                          attribute: .centerX,
+                                          relatedBy: .equal,
+                                          toItem: self.previousSubjectButton,
+                                          attribute: .centerX,
+                                          multiplier: 1.0,
+                                          constant: 0)
+                     self.view.addConstraints([centerXConstraint, centerYConstraint])
+
+                     self.previousSubjectButtonWidthConstraint.constant = newButtonWidth
+                     self.previousSubjectButtonHeightConstraint.constant = newButtonHeight
+                     self.view.layoutIfNeeded()
+
+                     self.previousSubjectGradient.colors = newGradient
+                     self.previousSubjectGradient.frame = self.previousSubjectButton.bounds
+                     self.previousSubjectButton.alpha = 1.0
+
+                     self.previousSubjectLabel?.transform = CGAffineTransform(scaleX: 0.01, y: 0.01)
+                     self.previousSubjectLabel?.alpha = 0.01
+                   }) { (_: Bool) in
+      self.previousSubjectLabel?.removeFromSuperview()
+      self.previousSubjectLabel = label
+    }
+  }
+
+  @IBAction func previousSubjectButtonPressed(_: Any) {
+    perform(segue: StoryboardSegue.Review.subjectDetails, sender: previousSubject)
+  }
+
+  // MARK: - Question label fonts
+
+  func setCustomQuestionLabelFont(useCustomFont: Bool) {
+    let fontName = useCustomFont ? currentFontName! : TKMStyle.japaneseFontName
+    questionLabel.font = UIFont(name: fontName, size: questionLabelFontSize())
+  }
+
+  @objc func didShortPressQuestionLabel(_: UITapGestureRecognizer) {
+    toggleFont()
+    if Settings.ankiMode {
+      if !isAnimatingSubjectDetailsView { submit() }
+      else { ankiModeCachedSubmit = true }
+    }
+  }
+
+  @objc func didSwipeQuestionLabel(_ sender: UISwipeGestureRecognizer) {
+    if sender.direction == .left {
+      showNextCustomFont()
+    } else if sender.direction == .right {
+      showPreviousCustomFont()
+    }
+  }
+
+  @objc func showNextCustomFont() {
+    currentFontName = nextCustomFont(thatCanRenderText: session.activeSubject.japanese) ??
+      TKMStyle.japaneseFontName
+    setCustomQuestionLabelFont(useCustomFont: true)
+  }
+
+  @objc func showPreviousCustomFont() {
+    currentFontName = previousCustomFont(thatCanRenderText: session.activeSubject.japanese) ??
+      TKMStyle.japaneseFontName
+    setCustomQuestionLabelFont(useCustomFont: true)
+  }
+
+  func questionLabelFontSize() -> CGFloat {
+    #if targetEnvironment(macCatalyst)
+    return min(110, max(44, CGFloat(defaultFontSize * 1.5 * Double(Settings.fontSize))))
+    #else
+    if UIDevice.current.userInterfaceIdiom == .pad {
+      return CGFloat(defaultFontSize * 2.5 * Double(Settings.fontSize))
+    } else {
+      return CGFloat(defaultFontSize * Double(Settings.fontSize))
+    }
+    #endif
+  }
+
+  @objc func toggleFont() {
+    let useCustomFont = questionLabel.font.fontName == TKMStyle.japaneseFontName
+    setCustomQuestionLabelFont(useCustomFont: useCustomFont)
+  }
+
+  // MARK: - Menu button
+
+  @IBAction func menuButtonPressed(_: Any) {
+    delegate.tappedMenuButton?(reviewViewController: self, menuButton: menuButton)
+  }
+
+  func quickSettingsChanged() {
+    if subjectDetailsView.isHidden {
+      updateViewForCurrentTask(updateFirstResponder: false)
+    }
+  }
+
+  // MARK: - Wrapping up
+
+  @objc public var wrappingUp: Bool {
+    get {
+      session.wrappingUp
+    }
+    set {
+      session.wrappingUp = newValue
+      wrapUpIcon.isHidden = !newValue
+      wrapUpLabel.isHidden = !newValue
+    }
+  }
+
+  // MARK: - Submitting answers
+
+  func answerFieldValueDidChange() {
+    let text = answerField.text!.trimmingCharacters(in: .whitespaces)
+
+    if Settings.allowSkippingReviews {
+      let newImage = text.isEmpty ? skipImage : tickImage
+      UIView
+        .transition(with: submitButton, duration: 0.1,
+                    options: .transitionCrossDissolve, animations: {
+                      self.submitButton.setImage(newImage, for: .normal)
+                    }, completion: nil)
+    }
+    submitButton.isEnabled = Settings.allowSkippingReviews || Settings.ankiMode || !text.isEmpty
+  }
+
+  func textField(_ field: UITextField, shouldChangeCharactersIn _: NSRange,
+                 replacementString _: String) -> Bool {
+    DispatchQueue.main.async {
+      self.answerFieldValueDidChange()
+    }
+    let style = NSMutableParagraphStyle()
+    style.alignment = NSTextAlignment.center
+    field.typingAttributes = [.paragraphStyle: style]
+    return true
+  }
+
+  @IBAction func submitButtonPressed(_: Any) {
+    enterKeyPressed()
+  }
+
+  func textFieldShouldReturn(_: UITextField) -> Bool {
+    enterKeyPressed()
+
+    // Keep the cursor in the text field except when subject details are displayed.
+    return !subjectDetailsView.isHidden
+  }
+
+  @objc func enterKeyPressed() {
+    if answerField.markedTextRange != nil || !submitButton.isEnabled {
+      return
+    }
+    if Settings.allowSkippingReviews,
+       answerField.text!.trimmingCharacters(in: .whitespaces).isEmpty {
+      markAnswer(.AskAgainLater)
+      return
+    }
+    if !answerField.isEnabled, !Settings.ankiMode {
+      if !subjectDetailsView.isHidden {
+        subjectDetailsView.saveStudyMaterials()
+      }
+      randomTask()
+    } else {
+      submit()
+    }
+  }
+
+  /// Used during wrong answers to reset the text field.
+  @objc func backspaceKeyPressed() {
+    answerField.text = nil
+    answerField.textColor = TKMStyle.Color.label
+    answerField.isEnabled = true
+    showingOverrideCorrectButton = false
+    revealAnswerButton.isHidden = true
+    revealAnswerButton.alpha = 0.0
+    setOverrideCorrectButtonVisible(false, animated: false)
+    submitButton.setImage(Settings.allowSkippingReviews ? skipImage : tickImage, for: .normal)
+    answerField.becomeFirstResponder()
+  }
+
+  func submit() {
+    if Settings.ankiMode {
+      ankiModeCachedSubmit = false
+      // Mark the answer incorrect to show the details. This can still be overriden.
+      let answersRevealed = !subjectDetailsView.isHidden
+      if !answersRevealed { markAnswer(.Incorrect) }
+      if Settings.showAnswerImmediately || answersRevealed { addSynonymButtonPressed(true) }
+      return
+    }
+
+    answerField.text = AnswerChecker.normalizedString(answerField.text ?? "",
+                                                      taskType: session.activeTaskType,
+                                                      alphabet: kanaInput.alphabet)
+    let result = AnswerChecker.checkAnswer(answerField.text!,
+                                           subject: session.activeSubject,
+                                           studyMaterials: session.activeStudyMaterials,
+                                           taskType: session.activeTaskType,
+                                           localCachingClient: services.localCachingClient)
+
+    switch result {
+    case .Precise:
+      markAnswer(.Correct)
+    case .Imprecise:
+      if Settings.exactMatch { shakeView(answerField) }
+      else { markAnswer(.Correct) }
+    case .Incorrect:
+      markAnswer(.Incorrect)
+    case .OtherKanjiReading:
+      shakeView(answerField)
+    case let .MismatchingOkurigana(ranges):
+      highlightAndShakeAnswer(ranges: ranges)
+    case let .ContainsInvalidCharacters(ranges):
+      highlightAndShakeAnswer(ranges: ranges)
+    case .IsReadingButWantMeaning:
+      shakeView(answerField)
+
+      // The user knows the reading so mark it correct if they haven't done it yet.
+      session.activeTask.answeredReading = true
+    }
+  }
+
+  func highlightAndShakeAnswer(ranges: [NSRange]) {
+    let text = NSMutableAttributedString(string: answerField.text!)
+    for range in ranges {
+      text.addAttribute(.foregroundColor, value: UIColor.systemRed, range: range)
+    }
+    answerField.attributedText = text
+
+    shakeView(answerField)
+  }
+
+  func shakeView(_ view: UIView) {
+    let animation = CABasicAnimation(keyPath: "position")
+    animation.duration = 0.1
+    animation.repeatCount = 3
+    animation.autoreverses = true
+    animation.fromValue = NSValue(cgPoint: CGPoint(x: view.center.x - 10, y: view.center.y))
+    animation.toValue = NSValue(cgPoint: CGPoint(x: view.center.x + 10, y: view.center.y))
+
+    view.layer.add(animation, forKey: nil)
+  }
+
+  private func markAnswer(_ result: AnswerResult) {
+    if result == .AskAgainLater {
+      // Take the task out of the queue so it comes back later.
+      session.moveActiveTaskToEnd()
+      randomTask()
+      return
+    }
+
+    if result.correct {
+      hapticGenerator.impactOccurred()
+      hapticGenerator.prepare()
+    }
+    if result == .Exclude {
+      // Take the task out of the queue
+      session.excludeTask()
+      randomTask()
+      return
+    }
+
+    // Mark the task.
+    var marked = session.markAnswer(result, isPracticeSession: isPracticeSession)
+
+    // Show a new task if it was correct.
+    if result != .Incorrect {
+      if !marked.subjectFinished,
+         session.activeAssignment.subjectType != .radical, // or kana mode?
+         Settings.ankiMode,
+         Settings.ankiModeCombineReadingMeaning {
+        session.nextTask()
+        marked = session.markAnswer(.Correct, isPracticeSession: isPracticeSession)
+      }
+
+      if Settings.playAudioAutomatically, session.activeTaskType == .reading,
+         let subject = session.activeSubject,
+         subject.hasVocabulary, !subject.vocabulary.audio.isEmpty {
+        services.audio.play(subjectID: subject.id, delegate: nil)
+      }
+
+      var previousSubjectLabel: UILabel?
+      if marked.subjectFinished, showSubjectHistory {
+        previousSubjectLabel = copyLabel(questionLabel)
+        previousSubject = session.activeSubject
+      }
+      randomTask()
+      if result.correct {
+        // We must start the success animations *after* all the UI elements have been moved to their
+        // new locations by randomTask(), so that, for example, the success sparkles animate from
+        // the final position of the answerField, not the original position.
+        #if !targetEnvironment(macCatalyst)
+        SuccessAnimation.run(answerField: answerField, doneLabel: doneLabel,
+                             srsLevelLabel: levelLabel, isSubjectFinished: marked.subjectFinished,
+                             didLevelUp: marked.didLevelUp, newSrsStage: marked.newSrsStage)
+        #endif
+      }
+
+      if let previousSubjectLabel = previousSubjectLabel {
+        animateLabelToPreviousSubjectButton(previousSubjectLabel)
+      }
+      return
+    }
+
+    // Otherwise show the correct answer.
+    showingOverrideCorrectButton = true
+    if !Settings.showAnswerImmediately, !Settings.ankiMode {
+      revealAnswerButton.isHidden = false
+      setOverrideCorrectButtonVisible(true, animated: false)
+      UIView.animate(withDuration: animationDuration,
+                     animations: {
+                       self.answerField.textColor = .systemRed
+                       self.answerField.isEnabled = false
+                       self.revealAnswerButton.alpha = 1.0
+                       self.overrideCorrectButton.alpha = 1.0
+                       self.submitButton.setImage(self.forwardArrowImage, for: .normal)
+                     })
+    } else {
+      revealAnswerButtonPressed(revealAnswerButton!)
+    }
+  }
+
+  @IBAction func revealAnswerButtonPressed(_: Any) {
+    let task = Settings.showFullAnswer ? nil : session.activeTask
+    subjectDetailsView.update(withSubject: session.activeSubject,
+                              studyMaterials: session.activeStudyMaterials,
+                              assignment: session.activeAssignment, task: task)
+
+    let setupContextFunc = { (ctx: AnimationContext) in
+      if self.questionLabel.font.fontName != TKMStyle.japaneseFontName {
+        ctx.addFadingLabel(original: self.questionLabel)
+        self.questionLabel.font = UIFont(name: TKMStyle.japaneseFontName,
+                                         size: self.questionLabelFontSize())
+      }
+    }
+    animateSubjectDetailsView(shown: true, setupContextFunc: setupContextFunc,
+                              updateFirstResponder: true)
+  }
+
+  // MARK: - Ignoring incorrect answers
+
+  @IBAction func addSynonymButtonPressed(_: Any) {
+    let c = UIAlertController(title: "Ignore incorrect answer?",
+                              message:
+                              "Don't cheat!  Only use this if you promise you " +
+                                "knew the correct answer.",
+                              preferredStyle: .actionSheet)
+    c.popoverPresentationController?.sourceView = addSynonymButton
+    c.popoverPresentationController?.sourceRect = addSynonymButton.bounds
+
+    c.addAction(UIAlertAction(title: "My answer was correct",
+                              style: .default,
+                              handler: { _ in self.markCorrect() }))
+    if Settings.ankiMode {
+      c.addAction(UIAlertAction(title: "My answer was incorrect",
+                                style: .default,
+                                handler: { _ in self.markIncorrect() }))
+    }
+    c.addAction(UIAlertAction(title: "Ask again later",
+                              style: .default,
+                              handler: { _ in self.askAgain() }))
+
+    if session.activeSubject.subjectType == .vocabulary {
+      c.addAction(UIAlertAction(title: "Exclude this item",
+                                style: .default,
+                                handler: { _ in self.exclude() }))
+    }
+
+    if session.activeTaskType == .meaning {
+      c.addAction(UIAlertAction(title: "Add synonym",
+                                style: .default,
+                                handler: { _ in self.addSynonym() }))
+    }
+
+    c.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
+    present(c, animated: true, completion: nil)
+  }
+
+  @objc func markCorrect() {
+    guard showingOverrideCorrectButton else { return }
+    markAnswer(.OverrideAnswerCorrect)
+  }
+
+  @objc func markIncorrect() {
+    randomTask()
+  }
+
+  @objc func askAgain() {
+    markAnswer(.AskAgainLater)
+  }
+
+  @objc func exclude() {
+    session.setExclude(true)
+    markAnswer(.Exclude)
+  }
+
+  @objc func addSynonym() {
+    if let text = answerField.text {
+      session.addSynonym(text)
+    }
+    markAnswer(.OverrideAnswerCorrect)
+  }
+
+  // For no particularly apparent reason, this seemingly pointless implementation
+  // means that holding down the command key after (say) pressing ⌘C does not
+  // repeat the action continuously on all subsequent reviews
+  override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+    super.canPerformAction(action, withSender: sender)
+  }
+
+  // MARK: - SubjectDelegate
+
+  func didTapSubject(_ subject: TKMSubject) {
+    perform(segue: StoryboardSegue.Review.subjectDetails, sender: subject)
+  }
+
+  // MARK: - Keyboard navigation
+
+  override var canBecomeFirstResponder: Bool {
+    true
+  }
+
+  override var keyCommands: [UIKeyCommand]? {
+    let keyboardEnter = UIKeyCommand(input: "\r",
+                                     modifierFlags: [],
+                                     action: #selector(enterKeyPressed),
+                                     discoverabilityTitle: "Continue")
+    let numericKeyPadEnter = UIKeyCommand(input: "\u{3}",
+                                          modifierFlags: [],
+                                          action: #selector(enterKeyPressed),
+                                          discoverabilityTitle: "Continue")
+    var keyCommands: [UIKeyCommand] = []
+
+    if !answerField.isEnabled, subjectDetailsView.isHidden {
+      // Continue when a wrong answer has been entered but the subject details view is hidden.
+      keyCommands.append(contentsOf: [UIKeyCommand(input: "\u{8}",
+                                                   modifierFlags: [],
+                                                   action: #selector(backspaceKeyPressed),
+                                                   discoverabilityTitle: "Clear wrong answer"),
+                                      keyboardEnter,
+                                      numericKeyPadEnter])
+    }
+
+    if !subjectDetailsView.isHidden {
+      // Key commands when showing the detail view
+      keyCommands.append(contentsOf: [UIKeyCommand(input: " ",
+                                                   modifierFlags: [],
+                                                   action: #selector(showAllInformation),
+                                                   discoverabilityTitle: "Show all information"),
+                                      UIKeyCommand(input: "j", modifierFlags: [],
+                                                   action: #selector(playAudio)),
+                                      UIKeyCommand(input: "a",
+                                                   modifierFlags: [.command],
+                                                   action: #selector(askAgain),
+                                                   discoverabilityTitle: "Ask again later"),
+                                      UIKeyCommand(input: "c",
+                                                   modifierFlags: [.command],
+                                                   action: #selector(markCorrect),
+                                                   discoverabilityTitle: "Mark correct"),
+                                      UIKeyCommand(input: "c",
+                                                   modifierFlags: [.control],
+                                                   action: #selector(markCorrect)),
+                                      UIKeyCommand(input: "i",
+                                                   modifierFlags: [.command],
+                                                   action: #selector(markIncorrect),
+                                                   discoverabilityTitle: "Mark incorrect"),
+                                      UIKeyCommand(input: "i",
+                                                   modifierFlags: [.control],
+                                                   action: #selector(markIncorrect)),
+                                      UIKeyCommand(input: "s",
+                                                   modifierFlags: [.command],
+                                                   action: #selector(addSynonym),
+                                                   discoverabilityTitle: "Add as synonym"),
+                                      keyboardEnter,
+                                      numericKeyPadEnter])
+    } else {
+      if !revealAnswerButton.isHidden {
+        keyCommands.append(UIKeyCommand(input: "f",
+                                        modifierFlags: [],
+                                        action: #selector(revealAnswerButtonPressed),
+                                        discoverabilityTitle: "Reveal answer"))
+      }
+    }
+
+    if Settings.selectedFonts.count > 0 {
+      keyCommands.append(UIKeyCommand(input: "\t",
+                                      modifierFlags: [],
+                                      action: #selector(toggleFont),
+                                      discoverabilityTitle: "Toggle font"))
+      keyCommands.append(UIKeyCommand(input: UIKeyCommand.inputRightArrow,
+                                      modifierFlags: [],
+                                      action: #selector(showNextCustomFont),
+                                      discoverabilityTitle: "Next font"))
+      keyCommands.append(UIKeyCommand(input: UIKeyCommand.inputLeftArrow,
+                                      modifierFlags: [],
+                                      action: #selector(showPreviousCustomFont),
+                                      discoverabilityTitle: "Previous font"))
+    }
+    if !previousSubjectButton.isHidden {
+      keyCommands.append(UIKeyCommand(input: "p",
+                                      modifierFlags: [.command],
+                                      action: #selector(previousSubjectButtonPressed(_:)),
+                                      discoverabilityTitle: "Previous subject"))
+    }
+    return keyCommands
+  }
+
+  @objc func showAllInformation() {
+    if !subjectDetailsView.isHidden {
+      subjectDetailsView.showAllFields()
+    }
+  }
+
+  @objc func playAudio() {
+    if !subjectDetailsView.isHidden {
+      subjectDetailsView.playAudio()
+    }
+  }
+}

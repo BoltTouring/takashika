@@ -1,0 +1,13 @@
+.DS_Store
+output/
+release/
+.signing/
+android/build/
+node_modules/
+**/xcuserdata/
+**/build/
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+.env*

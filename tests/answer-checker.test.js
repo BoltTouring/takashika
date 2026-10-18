@@ -39,3 +39,12 @@ test('rejects blacklisted meanings and non-accepted readings', () => {
     assert.equal(AnswerChecker.checkReading('ichi', subject), true);
     assert.equal(AnswerChecker.checkReading('ひと', subject), false);
 });
+
+test('handles syllabic n, full-width input, and common romaji aliases', () => {
+    for (const [input, expected] of [
+        ['kana', 'かな'], ['konnichiha', 'こんにちは'], ["kin'en", 'きんえん'],
+        ['kinen', 'きねん'], ['nn', 'ん'], ['kan', 'かん'], ['kanna', 'かんな'],
+        ['gakkou', 'がっこう'], ['shinbun', 'しんぶん'], ['ＳＨＩ', 'し'],
+        ['ｶﾞｯｺｳ', 'がっこう'], ['sya', 'しゃ'], ['matcha', 'まっちゃ']
+    ]) assert.equal(AnswerChecker.toHiragana(input), expected, input);
+});

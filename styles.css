@@ -656,3 +656,58 @@ button:active {
 .menu.show {
     animation: slideIn 0.2s ease-out;
 }
+
+/* Keyboard access, small screens, and explicit session states. */
+button:focus-visible, a:focus-visible { outline: 3px solid #222; outline-offset: 4px; }
+button:disabled { opacity: .55; cursor: wait; transform: none; }
+.screen { height: auto; min-height: 100dvh; }
+.question-text { overflow-wrap: anywhere; }
+.radical-image { width: 96px; height: 96px; object-fit: contain; }
+#empty-state { margin: 2rem auto; max-width: 560px; }
+#empty-state p { margin: 1rem 0; }
+#save-error { color: #a12424; margin-bottom: 1rem; }
+#login-error:empty, #save-error:empty { display: none; }
+#login-screen #login-error { background: #732234; padding: 1rem; border-radius: 8px; margin-top: 1rem; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* Shared calm reviewer, including the bundled Android app. */
+:root { color-scheme: dark; --meaning: #ff648f; --reading: #c58aff; --radical: #64b5ff; --accent: #59d4b5; }
+body, .screen { background: #1e1e1e; color: #eee; }
+.screen { min-height: 100dvh; height: auto; }
+.container { min-height: 100dvh; gap: 1rem; }
+.header, .card, #result-card, .menu, .stats-grid, .stat-item { background: #252525; color: #eee; border-color: #444; }
+#login-screen { background: #1e1e1e; }
+#home-screen .container { text-align: center; }
+#home-screen button { width: 100%; }
+button { background: var(--accent); color: #172923; }
+#question-card, #question-card.meaning-mode, #question-card.reading-mode { background: #252525; border: 1px solid #444; }
+.question-text { color: #eee; }
+.subject-type, .task-mode-copy, .question-hint { display: none; }
+.task-mode-label { font-size: 1.35rem; text-transform: none; padding: 0; letter-spacing: 0; }
+#question-card.meaning-mode .task-mode-label { background: none; color: var(--meaning); }
+#question-card.reading-mode .task-mode-label { background: none; color: var(--reading); }
+#question-card.radical-mode .task-mode-label { color: var(--radical); }
+.answer-section input { color: #eee; text-align: center; }
+.answer-section input.meaning-field, .answer-section input.meaning-field:focus { background: #303030; border-color: var(--meaning); box-shadow: none; }
+.answer-section input.reading-field, .answer-section input.reading-field:focus { background: #303030; border-color: var(--reading); box-shadow: none; }
+.answer-section input.radical-field, .answer-section input.radical-field:focus { border-color: var(--radical); }
+.answer-section button.meaning-action, .answer-section button.reading-action { background: var(--accent); color: #172923; }
+#result-card.correct, #result-card.incorrect { background: #252525; }
+.result-text.correct { color: var(--accent); }
+.result-text.incorrect { color: #ff7070; }
+.secondary-action, #menu-btn { color: var(--accent); background: transparent; box-shadow: none; }
+#done-btn { font-size: 0.9rem; }
+.menu-item, .excluded-item { background: #252525; color: #eee; }
+#empty-state { margin: 2rem auto; width: min(90%, 600px); }
+#empty-state button { display: block; margin: 1rem auto 0; }
+#pause-btn { padding: .4rem; }
+@media (max-width: 600px) { .review-container { padding: 1rem; gap: 1rem; } .card { padding: 1.3rem; } }
+#review-screen { background: #1e1e1e; }
+.stats { color: #ccc; gap: 1rem; }
+#pause-btn { width: auto; flex: 0 0 auto; }
+.secondary-action { border: none; }
+#save-error { color: #ff9292; }
+button:focus-visible, a:focus-visible { outline-color: var(--accent); }
+.answer-section input::placeholder { color: #aaa; }

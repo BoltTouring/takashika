@@ -3,6 +3,7 @@ const JAPANESE_TEXT_RANGE = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/;
 
 function normalizeMeaning(text) {
     return text
+        .normalize('NFKC')
         .trim()
         .toLowerCase()
         .replace(/-/g, ' ')
@@ -12,9 +13,10 @@ function normalizeMeaning(text) {
 
 function normalizeReadingInput(text) {
     return text
+        .normalize('NFKC')
         .trim()
         .toLowerCase()
-        .replace(/[.'\/\-\s]/g, '')
+        .replace(/[.\/\-\s]/g, '')
         .replace(/ｎ/g, 'n');
 }
 
@@ -73,6 +75,7 @@ export class AnswerChecker {
         if (!input) return '';
         let text = input.toLowerCase();
 
+        text = text.replace(/tch/g, 'っch');
         text = text.replace(/(bb|cc|dd|ff|gg|hh|jj|kk|ll|mm|pp|qq|rr|ss|tt|vv|ww|xx|zz)/g, match => `っ${match[0]}`);
         text = text.replace(/jya/g, 'ja').replace(/jyu/g, 'ju').replace(/jyo/g, 'jo');
         text = text.replace(/zya/g, 'ja').replace(/zyu/g, 'ju').replace(/zyo/g, 'jo');
@@ -90,14 +93,6 @@ export class AnswerChecker {
             bya: 'びゃ', byu: 'びゅ', byo: 'びょ',
             pya: 'ぴゃ', pyu: 'ぴゅ', pyo: 'ぴょ'
         };
-
-        for (const [romaji, kana] of Object.entries(digraphs)) {
-            text = text.replace(new RegExp(romaji, 'g'), kana);
-        }
-
-        text = text.replace(/shi/g, 'し').replace(/chi/g, 'ち').replace(/tsu/g, 'つ');
-        text = text.replace(/ji/g, 'じ');
-        text = text.replace(/di/g, 'ぢ').replace(/du/g, 'づ');
 
         const syllables = {
             a: 'あ', i: 'い', u: 'う', e: 'え', o: 'お',
@@ -117,10 +112,28 @@ export class AnswerChecker {
             pa: 'ぱ', pi: 'ぴ', pu: 'ぷ', pe: 'ぺ', po: 'ぽ'
         };
 
-        for (const romaji of Object.keys(syllables).sort((left, right) => right.length - left.length)) {
-            text = text.replace(new RegExp(romaji, 'g'), syllables[romaji]);
+        const mapping = { ...syllables, ...digraphs, shi: 'し', chi: 'ち', tsu: 'つ',
+            ji: 'じ', di: 'ぢ', du: 'づ', si: 'し', ti: 'ち', tu: 'つ', hu: 'ふ',
+            sya: 'しゃ', syu: 'しゅ', syo: 'しょ', tya: 'ちゃ', tyu: 'ちゅ', tyo: 'ちょ',
+            fa: 'ふぁ', fi: 'ふぃ', fe: 'ふぇ', fo: 'ふぉ',
+            xa: 'ぁ', xi: 'ぃ', xu: 'ぅ', xe: 'ぇ', xo: 'ぉ', xtsu: 'っ', ltsu: 'っ' };
+        const keys = Object.keys(mapping).sort((a, b) => b.length - a.length);
+        let result = '';
+        while (text) {
+            if (text.startsWith("n'") || text.startsWith('nn')) {
+                result += 'ん';
+                text = text.slice(text.startsWith('nn') && /[aiueoy]/.test(text[2] || ' ') ? 1 : 2);
+                continue;
+            }
+            if (text[0] === 'n' && !/[aiueoy]/.test(text[1] || ' ')) {
+                result += 'ん';
+                text = text.slice(1);
+                continue;
+            }
+            const key = keys.find(key => text.startsWith(key));
+            result += key ? mapping[key] : text[0];
+            text = text.slice(key ? key.length : 1);
         }
-
-        return text.replace(/n(?![aiueoy])/g, 'ん');
+        return result;
     }
 }

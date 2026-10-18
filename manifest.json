@@ -1,6 +1,6 @@
 {
-  "name": "WaniKani Review PWA",
-  "short_name": "WaniKani Review",
+  "name": "Takashika — WaniKani Reviews",
+  "short_name": "Takashika",
   "description": "WaniKani review app with exclusion support",
   "id": "./",
   "start_url": "./",

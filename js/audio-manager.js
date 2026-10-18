@@ -4,6 +4,12 @@ export class AudioManager {
         this.activeAudio = null;
     }
 
+    clear() {
+        this.activeAudio?.pause();
+        this.activeAudio = null;
+        this.audioCache.clear();
+    }
+
     getPreferredPronunciationAudio(subject) {
         const audios = subject?.data?.pronunciation_audios || [];
         if (!audios.length) return null;
@@ -28,9 +34,10 @@ export class AudioManager {
             element = new Audio(audio.url);
             element.preload = 'auto';
             this.audioCache.set(cacheKey, element);
+            try { element.load(); } catch (_) {}
+            if (this.audioCache.size > 8) this.audioCache.delete(this.audioCache.keys().next().value);
         }
 
-        try { element.load(); } catch (_) {}
         return element;
     }
 

@@ -1,3 +1,4 @@
+import { restoreCheckpoints, hasProgress } from './review-checkpoint.js';
 import { AnswerChecker } from './answer-checker.js';
 import { AudioManager } from './audio-manager.js';
 import { buildReviewQueue } from './review-queue.js';
@@ -25,13 +26,18 @@ export class WaniKaniReviewer {
         this.menuTopPx = 80;
         this.audioManager = new AudioManager();
         this.completedReviewItems = 0;
+        this.isSaving = false;
+        this.isLoading = false;
+        this.pendingReviews = [];
+        this.onHome = false;
     }
 
     async init() {
         this.updateMenuTop();
         this.bindInputHandlers();
 
-        const savedToken = localStorage.getItem('wanikani_api_token');
+        let savedToken;
+        try { savedToken = localStorage.getItem('wanikani_api_token'); } catch (_) {}
         if (!savedToken) return;
 
         this.apiToken = savedToken;
@@ -52,36 +58,26 @@ export class WaniKaniReviewer {
         if (!answerInput) return;
 
         answerInput.addEventListener('compositionstart', () => { this.isComposing = true; });
-        answerInput.addEventListener('compositionend', () => {
-            this.isComposing = false;
-            if (this.currentTaskType === 'reading') {
-                answerInput.value = AnswerChecker.toHiragana(answerInput.value);
-            }
-        });
-        answerInput.addEventListener('input', () => {
-            if (this.currentTaskType !== 'reading' || this.isComposing) return;
-            const before = answerInput.value;
-            const after = AnswerChecker.toHiragana(before);
-            if (after === before) return;
-            answerInput.value = after;
-            try { answerInput.setSelectionRange(after.length, after.length); } catch (_) {}
-        });
+        answerInput.addEventListener('compositionend', () => { this.isComposing = false; });
     }
 
     async login() {
         const tokenInput = document.getElementById('api-token');
+        if (this.isLoading) return;
         this.apiToken = tokenInput.value.trim();
         if (!this.apiToken) {
-            alert('Please enter your API token');
+            document.getElementById('login-error').textContent = 'Please enter your API token.';
             return;
         }
 
-        localStorage.setItem('wanikani_api_token', this.apiToken);
         this.client = new WaniKaniClient(this.apiToken);
         await this.startReview();
     }
 
     async startReview() {
+        if (this.isLoading || this.isSaving) return;
+        this.isLoading = true;
+        document.getElementById('login-error').textContent = '';
         if (!this.client) this.client = new WaniKaniClient(this.apiToken);
 
         this.showScreen('loading');
@@ -90,18 +86,23 @@ export class WaniKaniReviewer {
         try {
             this.updateLoadingText('Loading user info...');
             this.user = await this.client.fetchUser();
+            try { localStorage.setItem('wanikani_api_token', this.apiToken); } catch (_) {}
 
             this.updateLoadingText('Loading assignments...');
             this.assignments = await this.client.fetchAssignments();
 
+            this.updateLoadingText('Loading study materials...');
+            this.studyMaterials = await this.client.fetchStudyMaterials();
             this.updateLoadingText('Loading subjects...');
-            const subjectIds = [...new Set(this.assignments.map(item => item.data.subject_id))];
+            const subjectIds = [...new Set([
+                ...this.assignments.map(item => item.data.subject_id),
+                ...this.studyMaterials.filter(item => item.data.meaning_note?.includes(EXCLUDE_MARKER))
+                    .map(item => item.data.subject_id)
+            ])];
             this.subjects = await this.client.fetchSubjectsByIds(subjectIds);
             this.subjectById.clear();
             for (const subject of this.subjects) this.subjectById.set(subject.id, subject);
 
-            this.updateLoadingText('Loading study materials...');
-            this.studyMaterials = await this.client.fetchStudyMaterials();
             this.studyMaterialBySubjectId.clear();
             for (const material of this.studyMaterials) {
                 this.studyMaterialBySubjectId.set(material.data.subject_id, material);
@@ -113,15 +114,64 @@ export class WaniKaniReviewer {
                 this.excludedSubjectIds,
                 subjectId => this.getSubject(subjectId)
             );
-            this.completedReviewItems = 0;
-
-            this.showScreen('review');
-            this.nextReview();
+            try {
+                const saved = JSON.parse(localStorage.getItem(this.checkpointKey()) || '[]');
+                if (Array.isArray(saved)) this.reviewQueue = restoreCheckpoints(this.reviewQueue, saved);
+            } catch (_) {}
+            this.pendingReviews = this.reviewQueue;
+            this.reviewQueue = [];
+            this.currentReview = null;
+            this.showHome();
+            return;
         } catch (error) {
             console.error('Error starting review:', error);
-            alert('Error loading your data. Please check your API token.');
+            document.getElementById('login-error').textContent = error.message || 'Unable to load data. Check your connection and try again.';
             this.showScreen('login');
+        } finally {
+            this.isLoading = false;
         }
+    }
+
+    checkpointKey() { return `takashika_reviews_${this.user?.id || this.user?.username || 'local'}`; }
+
+    saveCheckpoint() {
+        try {
+            const items = [this.currentReview, ...this.reviewQueue, ...this.pendingReviews].filter(Boolean);
+            localStorage.setItem(this.checkpointKey(), JSON.stringify(items.filter(hasProgress)));
+        } catch (_) {}
+    }
+
+    showHome() {
+        this.onHome = true;
+        this.showScreen('home');
+        const count = this.pendingReviews.length;
+        document.getElementById('home-title').textContent = count ? 'A small step today.' : "You're all caught up.";
+        document.getElementById('home-copy').textContent = count ? `${count} reviews ready. Start with a small batch, or review them all.` : 'Check back when more reviews are due.';
+        document.getElementById('quick-btn').textContent = `Do ${Math.min(10, count)} reviews`;
+        document.getElementById('quick-btn').disabled = count === 0;
+        document.getElementById('all-reviews-btn').disabled = count === 0;
+    }
+
+    startBatch(limit = 10) {
+        if (this.isSaving || !this.pendingReviews.length) return;
+        this.reviewQueue = this.pendingReviews.splice(0, limit);
+        this.completedReviewItems = 0;
+        this.sessionStats = { total: 0, correct: 0, incorrect: 0 };
+        this.onHome = false;
+        for (const id of ['review-content', 'question-card', 'answer-section']) document.getElementById(id).classList.remove('hidden');
+        document.getElementById('empty-state').classList.add('hidden');
+        this.showScreen('review');
+        this.nextReview();
+    }
+
+    pauseReview() {
+        if (this.isSaving || this.isLoading) return;
+        this.pendingReviews = [this.currentReview, ...this.reviewQueue, ...this.pendingReviews].filter(Boolean);
+        this.currentReview = null;
+        this.reviewQueue = [];
+        this.currentResultIsCorrect = null;
+        this.saveCheckpoint();
+        this.showHome();
     }
 
     processExcludedItems() {
@@ -140,6 +190,8 @@ export class WaniKaniReviewer {
     }
 
     nextReview() {
+        this.currentReview = null;
+        this.saveCheckpoint();
         if (this.reviewQueue.length === 0) {
             this.showNoReviews();
             return;
@@ -157,6 +209,11 @@ export class WaniKaniReviewer {
         this.audioManager.primeForSubject(subject);
         this.audioManager.primeNext(this.reviewQueue, subjectId => this.getSubject(subjectId));
         this.displayQuestion(subject);
+        if (this.isReviewItemFinished(subject, this.currentReview)) {
+            this.currentResultIsCorrect = true;
+            this.showResult(true, subject);
+            document.getElementById('result-primary-btn').textContent = 'Retry save';
+        }
         this.updateProgress();
     }
 
@@ -186,39 +243,58 @@ export class WaniKaniReviewer {
         const audioBtn = document.getElementById('audio-btn');
         const submitBtn = document.getElementById('submit-btn');
 
-        questionCard.classList.remove('meaning-mode', 'reading-mode');
-        answerInput.classList.remove('meaning-field', 'reading-field');
+        questionCard.classList.remove('meaning-mode', 'reading-mode', 'radical-mode');
+        answerInput.classList.remove('meaning-field', 'reading-field', 'radical-field');
         submitBtn.classList.remove('meaning-action', 'reading-action');
         subjectTypeEl.textContent = subject.object.toUpperCase();
-        questionTextEl.textContent = subject.data.characters || subject.data.slug;
+        questionTextEl.textContent = subject.data.characters || '';
+        if (!subject.data.characters) {
+            const image = subject.data.character_images?.find(item => item.content_type === 'image/png')
+                || subject.data.character_images?.[0];
+            if (image) {
+                const img = document.createElement('img');
+                img.src = image.url;
+                img.alt = 'Radical to identify';
+                img.className = 'radical-image';
+                questionTextEl.appendChild(img);
+            } else {
+                questionTextEl.textContent = 'Image unavailable';
+            }
+        }
 
         if (this.currentTaskType === 'meaning') {
             questionCard.classList.add('meaning-mode');
-            taskModeLabelEl.textContent = subject.object === 'radical' ? 'Name' : 'Meaning';
+            taskModeLabelEl.textContent = subject.object === 'radical' ? 'Radical Name' : 'Meaning';
             taskModeCopyEl.textContent = 'English';
             questionHintEl.textContent = 'Answer in English';
             answerInput.classList.add('meaning-field');
+            if (subject.object === 'radical') {
+                questionCard.classList.add('radical-mode');
+                answerInput.classList.add('radical-field');
+            }
             submitBtn.classList.add('meaning-action');
             answerInput.classList.remove('japanese-input');
             answerInput.setAttribute('lang', 'en');
             answerInput.setAttribute('autocapitalize', 'none');
             answerInput.setAttribute('autocorrect', 'off');
-            answerInput.placeholder = 'Type the English meaning...';
+            answerInput.placeholder = subject.object === 'radical' ? 'Type the radical name...' : 'Type the English meaning...';
         } else {
             questionCard.classList.add('reading-mode');
             taskModeLabelEl.textContent = 'Reading';
             taskModeCopyEl.textContent = 'Hiragana';
-            questionHintEl.textContent = 'Type in hiragana';
+            questionHintEl.textContent = 'Type in kana or romaji';
             answerInput.classList.add('reading-field');
             submitBtn.classList.add('reading-action');
             answerInput.classList.add('japanese-input');
             answerInput.setAttribute('lang', 'ja');
             answerInput.setAttribute('autocapitalize', 'none');
             answerInput.setAttribute('autocorrect', 'off');
-            answerInput.placeholder = 'Type the reading (hiragana)...';
+            answerInput.placeholder = 'Type the reading (kana or romaji)...';
         }
 
-        audioBtn.classList.toggle('hidden', !this.audioManager.hasAudio(subject));
+        audioBtn.classList.add('hidden');
+        submitBtn.disabled = false;
+        document.getElementById('save-error').textContent = '';
         answerInput.value = '';
         answerInput.disabled = false;
         document.getElementById('result-card').classList.add('hidden');
@@ -226,11 +302,12 @@ export class WaniKaniReviewer {
     }
 
     submitAnswer() {
+        if (!this.currentReview || this.currentResultIsCorrect !== null || this.isComposing || this.isSaving) return;
         const answerInput = document.getElementById('answer-input');
         const userAnswerRaw = answerInput.value.trim();
         const subject = this.getSubject(this.currentReview.assignment.data.subject_id);
         if (!userAnswerRaw) {
-            alert('Please enter an answer');
+            answerInput.focus();
             return;
         }
 
@@ -251,10 +328,13 @@ export class WaniKaniReviewer {
         const answerInput = document.getElementById('answer-input');
 
         this.currentResultIsCorrect = isCorrect;
+        document.getElementById('submit-btn').disabled = true;
+        document.getElementById('audio-btn').classList.toggle('hidden', !this.audioManager.hasAudio(subject));
         resultCard.classList.remove('hidden', 'correct', 'incorrect');
         resultText.classList.remove('correct', 'incorrect');
         answerInput.blur();
         answerInput.disabled = true;
+        primaryBtn.focus();
 
         if (isCorrect) {
             resultCard.classList.add('correct');
@@ -272,7 +352,7 @@ export class WaniKaniReviewer {
         resultText.classList.add('incorrect');
         resultText.textContent = 'Incorrect';
         if (this.currentTaskType === 'meaning') {
-            correctAnswer.textContent = `Correct: ${AnswerChecker.getAcceptedMeanings(subject).join(', ')}`;
+            correctAnswer.textContent = `Correct: ${AnswerChecker.getAcceptedMeanings(subject, this.studyMaterialBySubjectId.get(subject.id)).join(', ')}`;
         } else {
             correctAnswer.textContent = `Correct: ${AnswerChecker.getAcceptedReadings(subject).join(', ')}`;
         }
@@ -282,64 +362,83 @@ export class WaniKaniReviewer {
         askLaterBtn.classList.remove('hidden');
     }
 
-    async markCorrect() {
-        const subject = this.getSubject(this.currentReview.assignment.data.subject_id);
-        if (this.shouldAutoPlayAudio(subject)) this.audioManager.playForSubject(subject);
-        this.sessionStats.correct += 1;
-        this.sessionStats.total += 1;
-        if (this.currentTaskType === 'meaning') this.currentReview.answeredMeaning = true;
-        else this.currentReview.answeredReading = true;
-        await this.advanceAfterAnswer(subject);
+    markCorrect() {
+        return this.commitAnswer(true);
     }
 
-    async markIncorrect() {
+    markIncorrect() {
+        return this.commitAnswer(false);
+    }
+
+    async commitAnswer(correct) {
+        if (!this.currentReview || this.currentResultIsCorrect === null || this.isSaving) return;
         const subject = this.getSubject(this.currentReview.assignment.data.subject_id);
-        this.sessionStats.incorrect += 1;
-        this.sessionStats.total += 1;
-        if (this.currentTaskType === 'meaning') this.currentReview.incorrectMeaningAnswers += 1;
-        else this.currentReview.incorrectReadingAnswers += 1;
+        // A failed save leaves a finished item here; retry without counting the answer twice.
+        if (!this.isReviewItemFinished(subject, this.currentReview)) {
+            this.sessionStats.total += 1;
+            this.sessionStats[correct ? 'correct' : 'incorrect'] += 1;
+            if (correct) {
+                this.currentReview[this.currentTaskType === 'meaning' ? 'answeredMeaning' : 'answeredReading'] = true;
+                if (this.shouldAutoPlayAudio(subject)) this.audioManager.playForSubject(subject);
+            } else {
+                this.currentReview[this.currentTaskType === 'meaning' ? 'incorrectMeaningAnswers' : 'incorrectReadingAnswers'] += 1;
+            }
+        }
+        this.saveCheckpoint();
         await this.advanceAfterAnswer(subject);
     }
 
     continueAfterResult() {
-        if (this.currentResultIsCorrect) this.markCorrect();
-        else this.markIncorrect();
+        return this.commitAnswer(this.currentResultIsCorrect === true);
     }
 
     askAgainLater() {
-        if (!this.currentReview) return;
-        this.currentReview.answeredMeaning = false;
-        this.currentReview.answeredReading = false;
-        this.currentReview.incorrectMeaningAnswers = 0;
-        this.currentReview.incorrectReadingAnswers = 0;
+        if (!this.currentReview || this.currentResultIsCorrect === null || this.isSaving
+            || this.isReviewItemFinished(this.getSubject(this.currentReview.assignment.data.subject_id), this.currentReview)) return;
+        // Deferring this question must preserve previously recorded answers and mistakes.
         this.reviewQueue.push(this.currentReview);
+        this.saveCheckpoint();
         this.nextReview();
     }
 
     async advanceAfterAnswer(subject) {
         if (this.isReviewItemFinished(subject, this.currentReview)) {
-            await this.sendProgress(this.currentReview);
-            this.completedReviewItems += 1;
-            this.nextReview();
+            this.isSaving = true;
+            this.setSavingControls(true);
+            try {
+                await this.sendProgress(this.currentReview);
+                this.completedReviewItems += 1;
+                this.nextReview();
+            } catch (error) {
+                document.getElementById('save-error').textContent =
+                    'Review not confirmed saved. Keep this page open. ' + error.message;
+                document.getElementById('result-primary-btn').textContent = 'Retry save';
+                document.getElementById('override-correct-btn').classList.add('hidden');
+                document.getElementById('ask-later-btn').classList.add('hidden');
+            } finally {
+                this.isSaving = false;
+                this.setSavingControls(false);
+            }
             return;
         }
-
         this.currentTaskType = this.getNextTaskType(subject, this.currentReview);
         this.currentResultIsCorrect = null;
         this.displayQuestion(subject);
         this.updateProgress();
     }
 
-    async sendProgress(reviewItem) {
-        try {
-            await this.client.createReview({
-                subjectId: reviewItem.assignment.data.subject_id,
-                incorrectMeaningAnswers: reviewItem.incorrectMeaningAnswers,
-                incorrectReadingAnswers: reviewItem.incorrectReadingAnswers
-            });
-        } catch (error) {
-            console.error('Error sending progress:', error);
+    setSavingControls(disabled) {
+        for (const id of ['result-primary-btn', 'override-correct-btn', 'ask-later-btn', 'logout-btn']) {
+            document.getElementById(id).disabled = disabled;
         }
+    }
+
+    async sendProgress(reviewItem) {
+        await this.client.createReview({
+            subjectId: reviewItem.assignment.data.subject_id,
+            incorrectMeaningAnswers: reviewItem.incorrectMeaningAnswers,
+            incorrectReadingAnswers: reviewItem.incorrectReadingAnswers
+        });
     }
 
     getSubject(subjectId) {
@@ -363,7 +462,7 @@ export class WaniKaniReviewer {
         const accuracyEl = document.getElementById('accuracy');
         const remaining = this.reviewQueue.length + (this.currentReview ? 1 : 0);
         const total = this.completedReviewItems + remaining;
-        progressEl.textContent = total > 0 ? `${this.completedReviewItems + 1}/${total}` : '0/0';
+        progressEl.textContent = total > 0 ? `${this.completedReviewItems}/${total} completed` : '0/0';
 
         const accuracy = this.sessionStats.total > 0
             ? Math.round((this.sessionStats.correct / this.sessionStats.total) * 100)
@@ -372,7 +471,21 @@ export class WaniKaniReviewer {
     }
 
     showNoReviews() {
-        alert('No reviews available! Check back later.');
+        this.currentReview = null;
+        this.currentTaskType = null;
+        this.currentResultIsCorrect = null;
+        for (const id of ['review-content', 'question-card', 'answer-section', 'result-card']) {
+            document.getElementById(id).classList.add('hidden');
+        }
+        document.getElementById('empty-state').classList.remove('hidden');
+        const remaining = this.pendingReviews.length;
+        document.getElementById('another-batch-btn').textContent = `Do another ${Math.min(10, remaining)}`;
+        document.getElementById('another-batch-btn').classList.toggle('hidden', remaining === 0);
+        document.getElementById('empty-title').textContent = this.completedReviewItems ? 'Session complete!' : 'All caught up';
+        document.getElementById('empty-copy').textContent = this.completedReviewItems
+            ? `${this.completedReviewItems} review${this.completedReviewItems === 1 ? '' : 's'} saved to WaniKani.`
+            : 'No reviews are due right now. Excluded items are skipped.';
+        this.updateProgress();
         this.showScreen('review');
     }
 
@@ -392,11 +505,7 @@ export class WaniKaniReviewer {
         this.updateMenuTop();
         menu.style.top = `${this.menuTopPx}px`;
         menu.classList.toggle('show');
-        if (menu.classList.contains('show')) {
-            setTimeout(() => {
-                document.addEventListener('click', this.closeMenuOnOutsideClick.bind(this), { once: true });
-            }, 0);
-        }
+        document.getElementById('menu-btn').setAttribute('aria-expanded', String(menu.classList.contains('show')));
     }
 
     closeMenuOnOutsideClick(event) {
@@ -405,6 +514,7 @@ export class WaniKaniReviewer {
         if (!menu) return;
         if (!menu.contains(event.target) && (!menuBtn || !menuBtn.contains(event.target))) {
             menu.classList.remove('show');
+            menuBtn?.setAttribute('aria-expanded', 'false');
         }
     }
 
@@ -417,6 +527,7 @@ export class WaniKaniReviewer {
         document.getElementById('accuracy-rate').textContent = `${accuracy}%`;
         this.showScreen('stats');
         document.getElementById('menu').classList.remove('show');
+        document.getElementById('menu-btn').setAttribute('aria-expanded', 'false');
     }
 
     showExcluded() {
@@ -429,12 +540,25 @@ export class WaniKaniReviewer {
 
             const item = document.createElement('div');
             item.className = 'excluded-item';
-            item.innerHTML = `<div class="subject-info"><div class="subject-text">${subject.data.characters || subject.data.slug}</div><div class="subject-meaning">${subject.data.meanings?.[0]?.meaning || 'No meaning'}</div></div>`;
+            const info = document.createElement('div');
+            info.className = 'subject-info';
+            for (const [className, text] of [
+                ['subject-text', subject.data.characters || subject.data.slug],
+                ['subject-meaning', subject.data.meanings?.[0]?.meaning || 'No meaning']
+            ]) {
+                const line = document.createElement('div');
+                line.className = className;
+                line.textContent = text;
+                info.appendChild(line);
+            }
+            item.appendChild(info);
             excludedList.appendChild(item);
         }
 
+        if (!excludedList.children.length) excludedList.textContent = 'No excluded items.';
         this.showScreen('excluded');
         document.getElementById('menu').classList.remove('show');
+        document.getElementById('menu-btn').setAttribute('aria-expanded', 'false');
     }
 
     backToReview() {
@@ -442,11 +566,19 @@ export class WaniKaniReviewer {
     }
 
     logout() {
-        localStorage.removeItem('wanikani_api_token');
+        if (this.isSaving) return;
+        this.saveCheckpoint();
+        try { localStorage.removeItem('wanikani_api_token'); } catch (_) {}
+        this.pendingReviews = [];
+        this.currentReview = null;
+        this.reviewQueue = [];
+        this.sessionStats = { total: 0, correct: 0, incorrect: 0 };
+        this.audioManager.clear();
         this.apiToken = null;
         this.client = null;
         this.showScreen('login');
         document.getElementById('api-token').value = '';
         document.getElementById('menu').classList.remove('show');
+        document.getElementById('menu-btn').setAttribute('aria-expanded', 'false');
     }
 }
