@@ -44,10 +44,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('menu-btn').setAttribute('aria-expanded', 'false');
         }
         if (event.key !== 'Enter' || event.isComposing || reviewer.isComposing || event.repeat) return;
-        if (reviewer.onHome) { reviewer.startBatch(); return; }
-        if (!document.getElementById('review-screen').classList.contains('active')) return;
-        if (!reviewer.currentReview) { reviewer.startBatch(); return; }
         if (event.target.tagName === 'BUTTON') return;
+        if (reviewer.onHome) { event.preventDefault(); reviewer.startBatch(); return; }
+        if (!document.getElementById('review-screen').classList.contains('active')) return;
+        if (!reviewer.currentReview) { event.preventDefault(); reviewer.startBatch(); return; }
         event.preventDefault();
         if (reviewer.currentResultIsCorrect === null) reviewer.submitAnswer();
         else reviewer.continueAfterResult();

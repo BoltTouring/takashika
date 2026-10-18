@@ -153,7 +153,7 @@ export class WaniKaniReviewer {
     }
 
     startBatch(limit = 10) {
-        if (this.isSaving || !this.pendingReviews.length) return;
+        if (this.isSaving || this.currentReview || this.reviewQueue.length || !this.pendingReviews.length) return;
         this.reviewQueue = this.pendingReviews.splice(0, limit);
         this.completedReviewItems = 0;
         this.sessionStats = { total: 0, correct: 0, incorrect: 0 };
